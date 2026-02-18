@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { authAPI } from '../services/api';
 import '../styles/Auth.css';
 
-const Signup = () => {
+const Signup = ({ onAuthSuccess }) => {
   const navigate = useNavigate();
-  const { signup } = useAuth();
   const [formData, setFormData] = useState({
     email: '',
     username: '',
@@ -31,9 +30,6 @@ const Signup = () => {
     e.preventDefault();
     setError('');
 
-    console.log('Form submitted with data:', formData);
-
-    // Basic validation
     if (!formData.fullName.trim()) {
       setError('Full name is required');
       return;
@@ -58,12 +54,10 @@ const Signup = () => {
       setError('Password is required');
       return;
     }
-
     if (formData.password !== formData.confirmPassword) {
       setError('Passwords do not match');
       return;
     }
-
     if (formData.password.length < 8) {
       setError('Password must be at least 8 characters');
       return;
@@ -85,13 +79,10 @@ const Signup = () => {
 
     try {
       const { confirmPassword, ...signupData } = formData;
-      console.log('Calling signup with:', signupData);
-      
-      await signup(signupData);
-      console.log('Signup successful, navigating to dashboard');
-      navigate('/dashboard');
+      const response = await authAPI.signup(signupData);
+      onAuthSuccess(response.data.user, response.data.token);
+      navigate('/classrooms');
     } catch (err) {
-      console.error('Signup failed:', err);
       const errorMsg = err.response?.data?.error || 'Signup failed. Please try again.';
       setError(errorMsg);
     } finally {

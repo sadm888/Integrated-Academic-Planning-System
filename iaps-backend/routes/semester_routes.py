@@ -1,279 +1,276 @@
 from flask import Blueprint, request, jsonify
-from database import db
-from auth_utils import require_auth, require_cr_access
+from flask_cors import cross_origin
 from datetime import datetime
 from bson import ObjectId
 import logging
 
-logger = logging.getLogger(__name__)
+from middleware import token_required, is_member_of_classroom
 
 semester_bp = Blueprint('semester', __name__, url_prefix='/api/semester')
+logger = logging.getLogger(__name__)
+
+
+def is_cr_of(semester, user_id):
+    """Check if user_id is in cr_ids of this semester"""
+    return str(user_id) in [str(c) for c in semester.get('cr_ids', [])]
+
 
 @semester_bp.route('/create', methods=['POST'])
-@require_auth
+@cross_origin()
+@token_required
 def create_semester():
-    """Create new semester session (CR only)"""
+    """Create a new semester. Only CRs of the current active semester can create a new one.
+    Creating a new semester deactivates (archives) the previous active semester."""
+    from database import get_db
+
     try:
-        data = request.json
-        classroom_id = data.get('classroomId', '')
+        data = request.get_json()
+        user_id = request.user['user_id']
+
+        classroom_id = data.get('classroom_id', '').strip()
         name = data.get('name', '').strip()
-        
+        sem_type = data.get('type', '').strip()
+        year = data.get('year', '').strip()
+        session = data.get('session', '').strip()
+
         if not all([classroom_id, name]):
-            return jsonify({'error': 'Classroom ID and semester name required'}), 400
-        
-        user_id = request.current_user['_id']
-        database = db.get_db()
-        
-        # Verify classroom membership
-        classroom = database.classrooms.find_one({'_id': ObjectId(classroom_id)})
-        
+            return jsonify({'error': 'Classroom ID and semester name are required'}), 400
+
+        db = get_db()
+
+        # Verify classroom exists and user is a member
+        classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
         if not classroom:
             return jsonify({'error': 'Classroom not found'}), 404
-        
-        if user_id not in classroom.get('members', []):
-            return jsonify({'error': 'Not a member of this classroom'}), 403
-        
-        # Check if user is CR in current active semester
-        current_semester = database.semester_sessions.find_one({
-            'classroomId': classroom_id,
-            'isActive': True
+
+        if not is_member_of_classroom(classroom, user_id):
+            return jsonify({'error': 'Access denied'}), 403
+
+        # Check if user is CR of the current active semester
+        active_sem = db.semesters.find_one({
+            'classroom_id': classroom_id,
+            'is_active': True
         })
-        
-        if current_semester and user_id not in current_semester.get('crIds', []):
-            return jsonify({'error': 'CR privileges required'}), 403
-        
-        # Archive current active semester
-        if current_semester:
-            database.semester_sessions.update_one(
-                {'_id': current_semester['_id']},
-                {
-                    '$set': {
-                        'isActive': False,
-                        'archivedAt': datetime.utcnow()
-                    }
-                }
-            )
-        
-        # Create new semester session
-        # Inherit CR list from previous semester or use creator
-        cr_ids = current_semester.get('crIds', [user_id]) if current_semester else [user_id]
-        
-        semester_doc = {
-            'classroomId': classroom_id,
+
+        if active_sem and not is_cr_of(active_sem, user_id):
+            return jsonify({'error': 'Only a CR can create new semesters'}), 403
+
+        # Archive all currently active semesters for this classroom
+        db.semesters.update_many(
+            {'classroom_id': classroom_id, 'is_active': True},
+            {'$set': {'is_active': False, 'archived_at': datetime.utcnow()}}
+        )
+
+        # Create new semester with the current user as CR
+        semester = {
+            'classroom_id': classroom_id,
             'name': name,
-            'crIds': cr_ids,
-            'isActive': True,
-            'createdAt': datetime.utcnow(),
-            'archivedAt': None
+            'type': sem_type,
+            'year': year,
+            'session': session,
+            'cr_ids': [user_id],
+            'is_active': True,
+            'created_at': datetime.utcnow(),
+            'archived_at': None
         }
-        
-        result = database.semester_sessions.insert_one(semester_doc)
-        
+
+        result = db.semesters.insert_one(semester)
+
         return jsonify({
-            'message': 'New semester created successfully',
+            'message': 'Semester created successfully',
             'semester': {
-                '_id': str(result.inserted_id),
+                'id': str(result.inserted_id),
                 'name': name,
-                'isActive': True,
-                'crIds': cr_ids
+                'type': sem_type,
+                'year': year,
+                'session': session,
+                'cr_ids': [user_id],
+                'is_active': True,
+                'created_at': semester['created_at'].isoformat()
             }
         }), 201
-        
+
     except Exception as e:
         logger.error(f"Create semester error: {e}")
-        return jsonify({'error': 'Server error creating semester'}), 500
+        return jsonify({'error': 'Failed to create semester'}), 500
+
 
 @semester_bp.route('/classroom/<classroom_id>/list', methods=['GET'])
-@require_auth
+@cross_origin()
+@token_required
 def list_semesters(classroom_id):
     """List all semesters for a classroom"""
+    from database import get_db
+
     try:
-        user_id = request.current_user['_id']
-        database = db.get_db()
-        
-        # Verify classroom membership
-        classroom = database.classrooms.find_one({'_id': ObjectId(classroom_id)})
-        
+        user_id = request.user['user_id']
+        user_oid = ObjectId(user_id)
+        db = get_db()
+
+        classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
         if not classroom:
             return jsonify({'error': 'Classroom not found'}), 404
-        
-        if user_id not in classroom.get('members', []):
-            return jsonify({'error': 'Not a member of this classroom'}), 403
-        
-        # Get all semesters, sorted by creation date (newest first)
-        semesters = list(database.semester_sessions.find(
-            {'classroomId': classroom_id}
-        ).sort('createdAt', -1))
-        
+
+        if not is_member_of_classroom(classroom, user_oid):
+            return jsonify({'error': 'Access denied'}), 403
+
+        semesters = list(db.semesters.find(
+            {'classroom_id': classroom_id}
+        ).sort('created_at', -1))
+
         result = []
-        for semester in semesters:
+        for sem in semesters:
+            cr_ids = [str(c) for c in sem.get('cr_ids', [])]
             result.append({
-                '_id': str(semester['_id']),
-                'name': semester['name'],
-                'isActive': semester.get('isActive', False),
-                'crIds': semester.get('crIds', []),
-                'isCR': user_id in semester.get('crIds', []),
-                'createdAt': semester['createdAt'].isoformat(),
-                'archivedAt': semester['archivedAt'].isoformat() if semester.get('archivedAt') else None
+                'id': str(sem['_id']),
+                'name': sem['name'],
+                'type': sem.get('type', ''),
+                'year': sem.get('year', ''),
+                'session': sem.get('session', ''),
+                'is_active': sem.get('is_active', False),
+                'cr_ids': cr_ids,
+                'is_user_cr': user_id in cr_ids,
+                'created_at': sem['created_at'].isoformat()
             })
-        
+
         return jsonify({'semesters': result}), 200
-        
+
     except Exception as e:
         logger.error(f"List semesters error: {e}")
-        return jsonify({'error': 'Server error fetching semesters'}), 500
+        return jsonify({'error': 'Failed to fetch semesters'}), 500
 
-@semester_bp.route('/<semester_id>', methods=['GET'])
-@require_auth
-def get_semester(semester_id):
-    """Get semester details"""
-    try:
-        user_id = request.current_user['_id']
-        database = db.get_db()
-        
-        semester = database.semester_sessions.find_one({'_id': ObjectId(semester_id)})
-        
-        if not semester:
-            return jsonify({'error': 'Semester not found'}), 404
-        
-        # Verify classroom membership
-        classroom = database.classrooms.find_one({'_id': ObjectId(semester['classroomId'])})
-        
-        if not classroom or user_id not in classroom.get('members', []):
-            return jsonify({'error': 'Access denied'}), 403
-        
-        return jsonify({
-            'semester': {
-                '_id': str(semester['_id']),
-                'classroomId': semester['classroomId'],
-                'name': semester['name'],
-                'isActive': semester.get('isActive', False),
-                'crIds': semester.get('crIds', []),
-                'isCR': user_id in semester.get('crIds', []),
-                'createdAt': semester['createdAt'].isoformat(),
-                'archivedAt': semester['archivedAt'].isoformat() if semester.get('archivedAt') else None
-            }
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Get semester error: {e}")
-        return jsonify({'error': 'Server error fetching semester'}), 500
 
 @semester_bp.route('/<semester_id>/add-cr', methods=['POST'])
-@require_auth
+@cross_origin()
+@token_required
 def add_cr(semester_id):
-    """Add a CR to semester (existing CR only)"""
+    """Add a CR to a semester. Only existing CRs can add new CRs."""
+    from database import get_db
+
     try:
-        data = request.json
-        new_cr_id = data.get('userId', '')
-        
+        data = request.get_json()
+        user_id = request.user['user_id']
+        new_cr_id = data.get('user_id', '').strip()
+
         if not new_cr_id:
-            return jsonify({'error': 'User ID required'}), 400
-        
-        user_id = request.current_user['_id']
-        database = db.get_db()
-        
-        semester = database.semester_sessions.find_one({'_id': ObjectId(semester_id)})
-        
+            return jsonify({'error': 'User ID is required'}), 400
+
+        db = get_db()
+        semester = db.semesters.find_one({'_id': ObjectId(semester_id)})
+
         if not semester:
             return jsonify({'error': 'Semester not found'}), 404
-        
-        # Check if requester is CR
-        if user_id not in semester.get('crIds', []):
-            return jsonify({'error': 'CR privileges required'}), 403
-        
-        # Verify new CR is a classroom member
-        classroom = database.classrooms.find_one({'_id': ObjectId(semester['classroomId'])})
-        
-        if new_cr_id not in classroom.get('members', []):
-            return jsonify({'error': 'User is not a classroom member'}), 400
-        
-        # Add CR
-        database.semester_sessions.update_one(
+
+        if not is_cr_of(semester, user_id):
+            return jsonify({'error': 'Only a CR can add other CRs'}), 403
+
+        # Check the new CR is a member of the classroom
+        classroom = db.classrooms.find_one({'_id': ObjectId(semester['classroom_id'])})
+        if not classroom or not is_member_of_classroom(classroom, new_cr_id):
+            return jsonify({'error': 'User must be a member of the classroom'}), 400
+
+        # Already a CR?
+        if is_cr_of(semester, new_cr_id):
+            return jsonify({'error': 'User is already a CR'}), 400
+
+        db.semesters.update_one(
             {'_id': ObjectId(semester_id)},
-            {'$addToSet': {'crIds': new_cr_id}}
+            {'$push': {'cr_ids': new_cr_id}}
         )
-        
+
         return jsonify({'message': 'CR added successfully'}), 200
-        
+
     except Exception as e:
         logger.error(f"Add CR error: {e}")
-        return jsonify({'error': 'Server error adding CR'}), 500
+        return jsonify({'error': 'Failed to add CR'}), 500
+
 
 @semester_bp.route('/<semester_id>/remove-cr', methods=['POST'])
-@require_auth
+@cross_origin()
+@token_required
 def remove_cr(semester_id):
-    """Remove a CR from semester (CR only, must maintain at least 1 CR)"""
+    """Remove a CR from a semester. CRs can remove other CRs. At least one CR must remain."""
+    from database import get_db
+
     try:
-        data = request.json
-        cr_to_remove = data.get('userId', '')
-        
-        if not cr_to_remove:
-            return jsonify({'error': 'User ID required'}), 400
-        
-        user_id = request.current_user['_id']
-        database = db.get_db()
-        
-        semester = database.semester_sessions.find_one({'_id': ObjectId(semester_id)})
-        
+        data = request.get_json()
+        user_id = request.user['user_id']
+        target_cr_id = data.get('user_id', '').strip()
+
+        if not target_cr_id:
+            return jsonify({'error': 'User ID is required'}), 400
+
+        db = get_db()
+        semester = db.semesters.find_one({'_id': ObjectId(semester_id)})
+
         if not semester:
             return jsonify({'error': 'Semester not found'}), 404
-        
-        # Check if requester is CR
-        if user_id not in semester.get('crIds', []):
-            return jsonify({'error': 'CR privileges required'}), 403
-        
-        # Ensure at least one CR remains
-        if len(semester.get('crIds', [])) <= 1:
-            return jsonify({'error': 'Cannot remove last CR. Add another CR first.'}), 400
-        
-        # Remove CR
-        database.semester_sessions.update_one(
+
+        if not is_cr_of(semester, user_id):
+            return jsonify({'error': 'Only a CR can remove CRs'}), 403
+
+        cr_ids = [str(c) for c in semester.get('cr_ids', [])]
+
+        if target_cr_id not in cr_ids:
+            return jsonify({'error': 'User is not a CR'}), 400
+
+        # Enforce at least one CR
+        if len(cr_ids) <= 1:
+            return jsonify({'error': 'Cannot remove the last CR. Add another CR first.'}), 400
+
+        db.semesters.update_one(
             {'_id': ObjectId(semester_id)},
-            {'$pull': {'crIds': cr_to_remove}}
+            {'$pull': {'cr_ids': target_cr_id}}
         )
-        
+
         return jsonify({'message': 'CR removed successfully'}), 200
-        
+
     except Exception as e:
         logger.error(f"Remove CR error: {e}")
-        return jsonify({'error': 'Server error removing CR'}), 500
+        return jsonify({'error': 'Failed to remove CR'}), 500
 
-@semester_bp.route('/<semester_id>/switch-active', methods=['POST'])
-@require_auth
-def switch_active_semester(semester_id):
-    """Switch which semester is active (does not archive, just changes active flag)"""
+
+@semester_bp.route('/<semester_id>', methods=['DELETE'])
+@cross_origin()
+@token_required
+def delete_semester(semester_id):
+    """Delete a semester (CR only, cannot delete the only semester)"""
+    from database import get_db
+
     try:
-        user_id = request.current_user['_id']
-        database = db.get_db()
-        
-        semester = database.semester_sessions.find_one({'_id': ObjectId(semester_id)})
-        
+        user_id = request.user['user_id']
+        db = get_db()
+
+        semester = db.semesters.find_one({'_id': ObjectId(semester_id)})
         if not semester:
             return jsonify({'error': 'Semester not found'}), 404
-        
-        # Verify classroom membership
-        classroom = database.classrooms.find_one({'_id': ObjectId(semester['classroomId'])})
-        
-        if not classroom or user_id not in classroom.get('members', []):
-            return jsonify({'error': 'Access denied'}), 403
-        
-        classroom_id = semester['classroomId']
-        
-        # Deactivate all semesters in this classroom
-        database.semester_sessions.update_many(
-            {'classroomId': classroom_id},
-            {'$set': {'isActive': False}}
-        )
-        
-        # Activate selected semester
-        database.semester_sessions.update_one(
-            {'_id': ObjectId(semester_id)},
-            {'$set': {'isActive': True}}
-        )
-        
-        return jsonify({'message': 'Active semester switched successfully'}), 200
-        
+
+        if not is_cr_of(semester, user_id):
+            return jsonify({'error': 'Only a CR can delete semesters'}), 403
+
+        # Don't allow deleting if it's the only semester
+        semester_count = db.semesters.count_documents({
+            'classroom_id': semester['classroom_id']
+        })
+        if semester_count <= 1:
+            return jsonify({'error': 'Cannot delete the only semester'}), 400
+
+        db.semesters.delete_one({'_id': ObjectId(semester_id)})
+
+        # If we deleted the active semester, activate the most recent remaining one
+        if semester.get('is_active'):
+            latest = db.semesters.find_one(
+                {'classroom_id': semester['classroom_id']},
+                sort=[('created_at', -1)]
+            )
+            if latest:
+                db.semesters.update_one(
+                    {'_id': latest['_id']},
+                    {'$set': {'is_active': True, 'archived_at': None}}
+                )
+
+        return jsonify({'message': 'Semester deleted successfully'}), 200
+
     except Exception as e:
-        logger.error(f"Switch semester error: {e}")
-        return jsonify({'error': 'Server error switching semester'}), 500
+        logger.error(f"Delete semester error: {e}")
+        return jsonify({'error': 'Failed to delete semester'}), 500

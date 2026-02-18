@@ -70,3 +70,7 @@ class Database:
 
 # Initialize the singleton instance
 db = Database()
+
+def get_db():
+    """Convenience function to get database instance"""
+    return db.get_db()

@@ -1,33 +1,36 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { authAPI } from '../services/api';
 import '../styles/Auth.css';
 
-const Login = () => {
+const Login = ({ onAuthSuccess }) => {
   const navigate = useNavigate();
-  const { login, error } = useAuth();
   const [formData, setFormData] = useState({
     email: '',
     password: '',
   });
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleChange = (e) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
     });
+    setError('');
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
+    setError('');
 
     try {
-      await login(formData);
-      navigate('/dashboard');
+      const response = await authAPI.login(formData);
+      onAuthSuccess(response.data.user, response.data.token);
+      navigate('/classrooms');
     } catch (err) {
-      console.error('Login error:', err);
+      setError(err.response?.data?.error || 'Login failed. Please try again.');
     } finally {
       setIsLoading(false);
     }

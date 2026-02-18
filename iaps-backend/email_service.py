@@ -28,20 +28,21 @@ def generate_verification_token(user_id):
     
     return token
 
-def generate_classroom_invite_token(classroom_id, invited_by):
+def generate_classroom_invite_token(classroom_id, invited_by, email):
     """Generate classroom invite token"""
     token = secrets.token_urlsafe(32)
     database = db.get_db()
-    
+
     database.verification_tokens.insert_one({
         'token': token,
         'classroomId': classroom_id,
         'invitedBy': invited_by,
+        'email': email,
         'type': 'classroom_invite',
         'expiresAt': datetime.utcnow() + timedelta(days=7),
         'createdAt': datetime.utcnow()
     })
-    
+
     return token
 
 def send_verification_email(email, username, token):
@@ -92,7 +93,7 @@ def send_verification_email(email, username, token):
 def send_classroom_invite_email(email, classroom_name, invited_by_name, token):
     """Send classroom invitation email"""
     try:
-        invite_url = f"{Config.FRONTEND_URL}/join-classroom?token={token}"
+        invite_url = f"{Config.FRONTEND_URL}/invite?token={token}"
         
         html_body = f"""
         <html>

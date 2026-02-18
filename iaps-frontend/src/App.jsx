@@ -1,23 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
-import Register from './pages/Register';
-import Classroom from './pages/Classroom';
+import Signup from './pages/Signup';
+import Classrooms from './pages/Classrooms';
+import ClassroomDetail from './pages/ClassroomDetail';
+import InviteAccept from './pages/InviteAccept';
+import { classroomAPI } from './services/api';
 
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check if user is logged in on mount
     const token = localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');
-    
+
     if (token && savedUser) {
       try {
         setUser(JSON.parse(savedUser));
       } catch (e) {
-        // Clear invalid data
         localStorage.removeItem('token');
         localStorage.removeItem('user');
       }
@@ -25,12 +26,21 @@ function App() {
     setLoading(false);
   }, []);
 
-  const handleLoginSuccess = (userData) => {
+  const handleAuthSuccess = async (userData, token) => {
+    localStorage.setItem('token', token);
+    localStorage.setItem('user', JSON.stringify(userData));
     setUser(userData);
-  };
 
-  const handleRegisterSuccess = (userData) => {
-    setUser(userData);
+    // Check for a pending invite token (from email invite link before signup)
+    const pendingToken = localStorage.getItem('pendingInviteToken');
+    if (pendingToken) {
+      localStorage.removeItem('pendingInviteToken');
+      try {
+        await classroomAPI.acceptInvite(pendingToken);
+      } catch (err) {
+        console.error('Failed to auto-accept invite:', err);
+      }
+    }
   };
 
   const handleLogout = () => {
@@ -57,43 +67,57 @@ function App() {
   return (
     <Router>
       <Routes>
-        <Route 
-          path="/login" 
+        <Route
+          path="/login"
           element={
             user ? (
-              <Navigate to="/classroom" replace />
+              <Navigate to="/classrooms" replace />
             ) : (
-              <Login onLoginSuccess={handleLoginSuccess} />
+              <Login onAuthSuccess={handleAuthSuccess} />
             )
-          } 
+          }
         />
-        <Route 
-          path="/register" 
+        <Route
+          path="/signup"
           element={
             user ? (
-              <Navigate to="/classroom" replace />
+              <Navigate to="/classrooms" replace />
             ) : (
-              <Register onRegisterSuccess={handleRegisterSuccess} />
+              <Signup onAuthSuccess={handleAuthSuccess} />
             )
-          } 
+          }
         />
-        <Route 
-          path="/classroom" 
+        <Route
+          path="/invite"
+          element={<InviteAccept user={user} />}
+        />
+        <Route
+          path="/classrooms"
           element={
             user ? (
-              <Classroom user={user} onLogout={handleLogout} />
+              <Classrooms user={user} onLogout={handleLogout} />
             ) : (
               <Navigate to="/login" replace />
             )
-          } 
+          }
         />
-        <Route 
-          path="/" 
-          element={<Navigate to={user ? "/classroom" : "/login"} replace />} 
+        <Route
+          path="/classroom/:classroomId"
+          element={
+            user ? (
+              <ClassroomDetail user={user} onLogout={handleLogout} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
         />
-        <Route 
-          path="*" 
-          element={<Navigate to={user ? "/classroom" : "/login"} replace />} 
+        <Route
+          path="/"
+          element={<Navigate to={user ? "/classrooms" : "/login"} replace />}
+        />
+        <Route
+          path="*"
+          element={<Navigate to={user ? "/classrooms" : "/login"} replace />}
         />
       </Routes>
     </Router>
