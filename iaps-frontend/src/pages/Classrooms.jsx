@@ -10,8 +10,7 @@ function Classrooms({ user, onLogout }) {
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [newClassroom, setNewClassroom] = useState({
     name: '',
-    description: '',
-    subject: ''
+    description: ''
   });
   const [joinCode, setJoinCode] = useState('');
   const [error, setError] = useState('');
@@ -40,7 +39,7 @@ function Classrooms({ user, onLogout }) {
     try {
       const response = await classroomAPI.create(newClassroom);
       setSuccess(`Classroom created! Code: ${response.data.classroom.code}`);
-      setNewClassroom({ name: '', description: '', subject: '' });
+      setNewClassroom({ name: '', description: '' });
       setShowCreateModal(false);
       fetchClassrooms();
     } catch (err) {
@@ -80,9 +79,6 @@ function Classrooms({ user, onLogout }) {
           <span className="classroom-badge teacher">CR</span>
         )}
       </div>
-      {classroom.subject && (
-        <p className="classroom-subject">{classroom.subject}</p>
-      )}
       {classroom.description && (
         <p className="classroom-description">{classroom.description}</p>
       )}
@@ -153,22 +149,8 @@ function Classrooms({ user, onLogout }) {
                     ...newClassroom,
                     name: e.target.value
                   })}
-                  placeholder="e.g., Mathematics 101"
+                  placeholder="e.g., CSE 2nd Year Section A"
                   required
-                  disabled={loading}
-                />
-              </div>
-
-              <div className="form-group">
-                <label>Subject</label>
-                <input
-                  type="text"
-                  value={newClassroom.subject}
-                  onChange={(e) => setNewClassroom({
-                    ...newClassroom,
-                    subject: e.target.value
-                  })}
-                  placeholder="e.g., Mathematics"
                   disabled={loading}
                 />
               </div>

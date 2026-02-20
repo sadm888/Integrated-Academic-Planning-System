@@ -257,6 +257,10 @@ def delete_semester(semester_id):
 
         db.semesters.delete_one({'_id': ObjectId(semester_id)})
 
+        # Cascade-delete subjects and todos for this semester
+        db.subjects.delete_many({'semester_id': semester_id})
+        db.todos.delete_many({'semester_id': semester_id})
+
         # If we deleted the active semester, activate the most recent remaining one
         if semester.get('is_active'):
             latest = db.semesters.find_one(

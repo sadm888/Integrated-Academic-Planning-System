@@ -49,12 +49,16 @@ def create_app():
     from routes.semester_routes import semester_bp
     from routes.document_routes import document_bp
     from routes.ai_routes import ai_bp
+    from routes.todo_routes import todo_bp
+    from routes.subject_routes import subject_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(classroom_bp)
     app.register_blueprint(semester_bp)
     app.register_blueprint(document_bp)
     app.register_blueprint(ai_bp)
+    app.register_blueprint(todo_bp)
+    app.register_blueprint(subject_bp)
     
     @app.route('/api/health', methods=['GET'])
     def health_check():

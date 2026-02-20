@@ -26,7 +26,6 @@ def format_classroom(classroom, show_code=False):
         'id': str(classroom['_id']),
         'name': classroom['name'],
         'description': classroom.get('description', ''),
-        'subject': classroom.get('subject', ''),
         'created_by': str(classroom['created_by']),
         'member_count': len(classroom.get('members', [])),
         'pending_requests': len(classroom.get('join_requests', [])),
@@ -51,7 +50,6 @@ def create_classroom():
 
         name = data.get('name', '').strip()
         description = data.get('description', '').strip()
-        subject = data.get('subject', '').strip()
 
         if not name:
             return jsonify({'error': 'Classroom name is required'}), 400
@@ -62,7 +60,6 @@ def create_classroom():
         classroom = {
             'name': name,
             'description': description,
-            'subject': subject,
             'code': code,
             'created_by': user_oid,
             'members': [user_oid],
@@ -325,8 +322,18 @@ def get_classroom(classroom_id):
         formatted_semesters = []
         for sem in semesters:
             cr_ids = [str(c) for c in sem.get('cr_ids', [])]
+            sem_id = str(sem['_id'])
+
+            # Fetch subjects for this semester
+            subjects = list(db.subjects.find({'semester_id': sem_id}).sort('created_at', 1))
+            formatted_subjects = [{
+                'id': str(s['_id']),
+                'name': s['name'],
+                'code': s.get('code', '')
+            } for s in subjects]
+
             formatted_semesters.append({
-                'id': str(sem['_id']),
+                'id': sem_id,
                 'name': sem['name'],
                 'type': sem.get('type', ''),
                 'year': sem.get('year', ''),
@@ -334,6 +341,7 @@ def get_classroom(classroom_id):
                 'is_active': sem.get('is_active', False),
                 'cr_ids': cr_ids,
                 'is_user_cr': user_id in cr_ids,
+                'subjects': formatted_subjects,
                 'created_at': sem['created_at'].isoformat()
             })
 
@@ -346,7 +354,6 @@ def get_classroom(classroom_id):
                 'id': str(classroom['_id']),
                 'name': classroom['name'],
                 'description': classroom.get('description', ''),
-                'subject': classroom.get('subject', ''),
                 'code': classroom['code'] if is_cr else None,
                 'created_by': str(classroom['created_by']),
                 'members': [{
@@ -388,8 +395,11 @@ def delete_classroom(classroom_id):
         if classroom['created_by'] != user_oid:
             return jsonify({'error': 'Only the classroom creator can delete it'}), 403
 
-        db.semesters.delete_many({'classroom_id': str(classroom['_id'])})
-        db.documents.delete_many({'classroom_id': str(classroom['_id'])})
+        classroom_id_str = str(classroom['_id'])
+        db.semesters.delete_many({'classroom_id': classroom_id_str})
+        db.documents.delete_many({'classroom_id': classroom_id_str})
+        db.subjects.delete_many({'classroom_id': classroom_id_str})
+        db.todos.delete_many({'classroom_id': classroom_id_str})
         db.classrooms.delete_one({'_id': ObjectId(classroom_id)})
 
         return jsonify({'message': 'Classroom deleted successfully'}), 200
@@ -397,6 +407,69 @@ def delete_classroom(classroom_id):
     except Exception as e:
         logger.error(f"Delete classroom error: {e}")
         return jsonify({'error': 'Failed to delete classroom'}), 500
+
+
+@classroom_bp.route('/<classroom_id>/remove-member', methods=['POST'])
+@cross_origin()
+@token_required
+def remove_member(classroom_id):
+    """Remove a member from the classroom. CR only. Cannot remove yourself or the creator."""
+    from database import get_db
+    from middleware import get_active_semester
+
+    try:
+        data = request.get_json()
+        cr_user_id = request.user['user_id']
+        target_user_id = data.get('user_id', '').strip()
+
+        if not target_user_id:
+            return jsonify({'error': 'User ID is required'}), 400
+
+        db = get_db()
+        classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
+
+        if not classroom:
+            return jsonify({'error': 'Classroom not found'}), 404
+
+        # Only CRs can remove members
+        active_sem = get_active_semester(db, classroom_id)
+        if not active_sem or cr_user_id not in [str(c) for c in active_sem.get('cr_ids', [])]:
+            return jsonify({'error': 'Only a CR can remove members'}), 403
+
+        # Cannot remove yourself
+        if target_user_id == cr_user_id:
+            return jsonify({'error': 'You cannot remove yourself'}), 400
+
+        # Cannot remove the classroom creator
+        if str(classroom['created_by']) == target_user_id:
+            return jsonify({'error': 'Cannot remove the classroom creator'}), 400
+
+        target_oid = ObjectId(target_user_id)
+
+        # Check they are actually a member
+        if not is_member_of_classroom(classroom, target_oid):
+            return jsonify({'error': 'User is not a member'}), 400
+
+        # Remove from members
+        db.classrooms.update_one(
+            {'_id': classroom['_id']},
+            {
+                '$pull': {'members': target_oid},
+                '$set': {'updated_at': datetime.utcnow()}
+            }
+        )
+
+        # Also remove from any CR lists in this classroom's semesters
+        db.semesters.update_many(
+            {'classroom_id': classroom_id},
+            {'$pull': {'cr_ids': target_user_id}}
+        )
+
+        return jsonify({'message': 'Member removed'}), 200
+
+    except Exception as e:
+        logger.error(f"Remove member error: {e}")
+        return jsonify({'error': 'Failed to remove member'}), 500
 
 
 @classroom_bp.route('/<classroom_id>/invite', methods=['POST'])

@@ -46,14 +46,14 @@ const Login = ({ onAuthSuccess }) => {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label>Email</label>
+            <label>Email or Username</label>
             <input
-              type="email"
+              type="text"
               name="email"
               value={formData.email}
               onChange={handleChange}
               required
-              placeholder="your@email.com"
+              placeholder="your@email.com or username"
             />
           </div>
 

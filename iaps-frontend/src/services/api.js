@@ -52,6 +52,7 @@ export const classroomAPI = {
   delete: (classroomId) => api.delete(`/classroom/${classroomId}`),
   list: () => api.get('/classroom/list'),
   getDetails: (classroomId) => api.get(`/classroom/${classroomId}`),
+  removeMember: (classroomId, userId) => api.post(`/classroom/${classroomId}/remove-member`, { user_id: userId }),
   invite: (classroomId, email) => api.post(`/classroom/${classroomId}/invite`, { email }),
   acceptInvite: (token) => api.post('/classroom/accept-invite', { token }),
 };
@@ -63,6 +64,39 @@ export const semesterAPI = {
   delete: (semesterId) => api.delete(`/semester/${semesterId}`),
   addCR: (semesterId, userId) => api.post(`/semester/${semesterId}/add-cr`, { user_id: userId }),
   removeCR: (semesterId, userId) => api.post(`/semester/${semesterId}/remove-cr`, { user_id: userId }),
+};
+
+// Document endpoints
+export const documentAPI = {
+  upload: (formData) => api.post('/document/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  list: (semesterId, params) => api.get(`/document/semester/${semesterId}/list`, { params }),
+  delete: (documentId) => api.delete(`/document/${documentId}`),
+  toggleAI: (documentId) => api.patch(`/document/${documentId}/toggle-ai`),
+};
+
+// Todo endpoints
+export const todoAPI = {
+  create: (data) => api.post('/todo/create', data),
+  list: (semesterId) => api.get(`/todo/semester/${semesterId}/list`),
+  toggle: (todoId) => api.patch(`/todo/${todoId}/toggle`),
+  delete: (todoId) => api.delete(`/todo/${todoId}`),
+};
+
+// Subject endpoints
+export const subjectAPI = {
+  create: (data) => api.post('/subject/create', data),
+  list: (semesterId) => api.get(`/subject/semester/${semesterId}/list`),
+  delete: (subjectId) => api.delete(`/subject/${subjectId}`),
+};
+
+// AI endpoints (stubs)
+export const aiAPI = {
+  summary: (data) => api.post('/ai/summary', data),
+  flashcards: (data) => api.post('/ai/flashcards', data),
+  quiz: (data) => api.post('/ai/quiz', data),
+  explain: (data) => api.post('/ai/explain', data),
 };
 
 export default api;

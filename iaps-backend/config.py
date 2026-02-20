@@ -25,7 +25,7 @@ class Config:
     MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER')
     
     # Frontend
-    FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+    FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
     
     # Security
     COOKIE_SECURE = os.getenv('COOKIE_SECURE', 'False') == 'True'
