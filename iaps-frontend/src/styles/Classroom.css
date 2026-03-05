@@ -13,7 +13,7 @@
 
 .classroom-header-section h1 {
   font-size: 32px;
-  color: #333;
+  color: var(--text-primary);
   margin: 0;
 }
 
@@ -44,7 +44,7 @@
 }
 
 .btn-secondary {
-  background: white;
+  background: var(--card-bg);
   color: #667eea;
   border: 2px solid #667eea;
 }
@@ -79,9 +79,9 @@
 
 .classrooms-section h2 {
   font-size: 24px;
-  color: #444;
+  color: var(--text-primary);
   margin-bottom: 20px;
-  border-bottom: 2px solid #eee;
+  border-bottom: 2px solid var(--border-color);
   padding-bottom: 10px;
 }
 
@@ -92,10 +92,10 @@
 }
 
 .classroom-card {
-  background: white;
+  background: var(--card-bg);
   border-radius: 12px;
   padding: 24px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow);
   transition: transform 0.3s, box-shadow 0.3s;
   cursor: pointer;
   border: 2px solid transparent;
@@ -116,7 +116,7 @@
 
 .classroom-header h3 {
   font-size: 20px;
-  color: #333;
+  color: var(--text-primary);
   margin: 0;
   flex: 1;
 }
@@ -141,7 +141,7 @@
 }
 
 .classroom-description {
-  color: #666;
+  color: var(--text-secondary);
   font-size: 14px;
   margin: 12px 0;
   line-height: 1.5;
@@ -153,25 +153,25 @@
   align-items: center;
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--border-color);
   font-size: 13px;
 }
 
 .student-count {
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .classroom-code {
-  background: #f5f5f5;
+  background: var(--border-color);
   padding: 4px 10px;
   border-radius: 6px;
   font-weight: 600;
-  color: #333;
+  color: var(--text-primary);
   font-family: monospace;
 }
 
 .no-classrooms {
-  color: #999;
+  color: var(--text-secondary);
   text-align: center;
   padding: 40px;
   font-size: 16px;
@@ -193,20 +193,20 @@
 }
 
 .modal-content {
-  background: white;
+  background: var(--card-bg);
   border-radius: 12px;
   padding: 30px;
   width: 100%;
   max-width: 500px;
   max-height: 90vh;
   overflow-y: auto;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal-content h2 {
   margin-top: 0;
   margin-bottom: 25px;
-  color: #333;
+  color: var(--text-primary);
   font-size: 24px;
 }
 
@@ -217,21 +217,24 @@
 .modal-content .form-group label {
   display: block;
   margin-bottom: 8px;
-  color: #555;
+  color: var(--text-secondary);
   font-weight: 500;
   font-size: 14px;
 }
 
 .modal-content .form-group input,
-.modal-content .form-group textarea {
+.modal-content .form-group textarea,
+.modal-content .form-group select {
   width: 100%;
   padding: 12px 15px;
-  border: 1.5px solid #ddd;
+  border: 1.5px solid var(--border-color);
   border-radius: 6px;
   font-size: 15px;
   font-family: inherit;
   transition: all 0.3s;
   box-sizing: border-box;
+  background: var(--bg-color);
+  color: var(--text-primary);
 }
 
 .modal-content .form-group input:focus,
@@ -244,7 +247,7 @@
 .modal-content .form-group small {
   display: block;
   margin-top: 6px;
-  color: #999;
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
@@ -266,12 +269,13 @@
 }
 
 .modal-buttons button[type="button"] {
-  background: #f5f5f5;
-  color: #666;
+  background: var(--border-color);
+  color: var(--text-secondary);
 }
 
 .modal-buttons button[type="button"]:hover:not(:disabled) {
-  background: #e0e0e0;
+  background: var(--border-color);
+  opacity: 0.8;
 }
 
 .modal-buttons button[type="submit"] {

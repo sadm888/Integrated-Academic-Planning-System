@@ -31,3 +31,14 @@ class Config:
     COOKIE_SECURE = os.getenv('COOKIE_SECURE', 'False') == 'True'
     COOKIE_SAMESITE = os.getenv('COOKIE_SAMESITE', 'Lax')
     COOKIE_HTTPONLY = True
+
+    # Google Calendar OAuth2
+    GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
+    GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
+    GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI', 'http://localhost:5001/api/calendar/callback')
+    GOOGLE_SCOPES = [
+        'openid',
+        'https://www.googleapis.com/auth/userinfo.email',
+        'https://www.googleapis.com/auth/userinfo.profile',
+        'https://www.googleapis.com/auth/calendar.events',
+    ]

@@ -1,10 +1,11 @@
 from flask import Blueprint, request, jsonify
 from flask_cors import cross_origin
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 import logging
 import random
 import string
+import os
 
 from middleware import token_required, is_member_of_classroom
 
@@ -50,6 +51,10 @@ def create_classroom():
 
         name = data.get('name', '').strip()
         description = data.get('description', '').strip()
+        sem_type = data.get('semester_type', 'odd').strip() or 'odd'
+        sem_number = data.get('semester_number', '').strip()
+        sem_year = data.get('year', '').strip()
+        sem_session = data.get('session', '').strip()
 
         if not name:
             return jsonify({'error': 'Classroom name is required'}), 400
@@ -72,13 +77,28 @@ def create_classroom():
         classroom['_id'] = result.inserted_id
         classroom_id = str(result.inserted_id)
 
+        # Build semester name from fields
+        type_label = 'Odd' if sem_type == 'odd' else 'Even'
+        parts = []
+        if sem_number:
+            parts.append(f'Semester {sem_number}')
+            parts.append(f'({type_label})')
+        else:
+            parts.append(f'{type_label} Semester')
+        if sem_year:
+            parts.append(sem_year)
+        if sem_session:
+            parts.append(f'({sem_session})')
+        sem_name = ' '.join(parts) if parts else 'Semester 1'
+
         # Auto-create first semester with creator as first CR
         first_semester = {
             'classroom_id': classroom_id,
-            'name': 'Semester 1',
-            'type': 'odd',
-            'year': str(datetime.utcnow().year),
-            'session': '',
+            'name': sem_name,
+            'type': sem_type,
+            'number': sem_number,
+            'year': sem_year,
+            'session': sem_session,
             'cr_ids': [user_id],
             'is_active': True,
             'created_at': datetime.utcnow(),
@@ -361,7 +381,10 @@ def get_classroom(classroom_id):
                     'username': m['username'],
                     'email': m['email'],
                     'fullName': m.get('fullName'),
-                    'profile_picture': m.get('profile_picture')
+                    'profile_picture': m.get('profile_picture'),
+                    # phone: visible to CR always, or to everyone if member made it public
+                    'phone': m.get('phone', '') if (is_cr or m.get('phone_public', False)) else None,
+                    'phone_public': m.get('phone_public', False),
                 } for m in members],
                 'join_requests': join_requests if is_cr else [],
                 'semesters': formatted_semesters,
@@ -376,15 +399,16 @@ def get_classroom(classroom_id):
         return jsonify({'error': 'Failed to retrieve classroom'}), 500
 
 
-@classroom_bp.route('/<classroom_id>', methods=['DELETE'])
+@classroom_bp.route('/<classroom_id>/leave', methods=['POST'])
 @cross_origin()
 @token_required
-def delete_classroom(classroom_id):
-    """Delete classroom (only the creator can delete)"""
+def leave_classroom(classroom_id):
+    """Leave a classroom. Any member can leave at any time."""
     from database import get_db
 
     try:
-        user_oid = ObjectId(request.user['user_id'])
+        user_id = request.user['user_id']
+        user_oid = ObjectId(user_id)
         db = get_db()
 
         classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
@@ -392,21 +416,54 @@ def delete_classroom(classroom_id):
         if not classroom:
             return jsonify({'error': 'Classroom not found'}), 404
 
-        if classroom['created_by'] != user_oid:
-            return jsonify({'error': 'Only the classroom creator can delete it'}), 403
+        if not is_member_of_classroom(classroom, user_oid):
+            return jsonify({'error': 'You are not a member of this classroom'}), 403
 
-        classroom_id_str = str(classroom['_id'])
-        db.semesters.delete_many({'classroom_id': classroom_id_str})
-        db.documents.delete_many({'classroom_id': classroom_id_str})
-        db.subjects.delete_many({'classroom_id': classroom_id_str})
-        db.todos.delete_many({'classroom_id': classroom_id_str})
-        db.classrooms.delete_one({'_id': ObjectId(classroom_id)})
+        # Block leave if user is the sole CR in any semester
+        sole_cr_semesters = list(db.semesters.find({
+            'classroom_id': classroom_id,
+            'cr_ids': user_id
+        }))
+        for sem in sole_cr_semesters:
+            cr_ids = [str(c) for c in sem.get('cr_ids', [])]
+            if len(cr_ids) == 1:
+                return jsonify({
+                    'error': f'You are the only CR in "{sem["name"]}". Transfer your CR role before leaving.'
+                }), 400
 
-        return jsonify({'message': 'Classroom deleted successfully'}), 200
+        # Get semester IDs for nomination cleanup
+        sem_ids = [str(s['_id']) for s in db.semesters.find({'classroom_id': classroom_id}, {'_id': 1})]
+
+        # Remove from members list
+        db.classrooms.update_one(
+            {'_id': classroom['_id']},
+            {
+                '$pull': {'members': user_oid},
+                '$set': {'updated_at': datetime.utcnow()}
+            }
+        )
+
+        # Remove from CR lists in every semester of this classroom
+        db.semesters.update_many(
+            {'classroom_id': classroom_id},
+            {'$pull': {'cr_ids': user_id}}
+        )
+
+        # Cancel any pending CR nominations involving this user
+        if sem_ids:
+            db.cr_nominations.delete_many({
+                'semester_id': {'$in': sem_ids},
+                '$or': [
+                    {'nominated_user_id': user_id},
+                    {'nominated_by_user_id': user_id}
+                ]
+            })
+
+        return jsonify({'message': 'You have left the classroom'}), 200
 
     except Exception as e:
-        logger.error(f"Delete classroom error: {e}")
-        return jsonify({'error': 'Failed to delete classroom'}), 500
+        logger.error(f"Leave classroom error: {e}")
+        return jsonify({'error': 'Failed to leave classroom'}), 500
 
 
 @classroom_bp.route('/<classroom_id>/remove-member', methods=['POST'])
@@ -440,9 +497,12 @@ def remove_member(classroom_id):
         if target_user_id == cr_user_id:
             return jsonify({'error': 'You cannot remove yourself'}), 400
 
-        # Cannot remove the classroom creator
-        if str(classroom['created_by']) == target_user_id:
-            return jsonify({'error': 'Cannot remove the classroom creator'}), 400
+        # CRs cannot remove other CRs
+        active_sem_for_check = get_active_semester(db, classroom_id)
+        if active_sem_for_check:
+            target_cr_ids = [str(c) for c in active_sem_for_check.get('cr_ids', [])]
+            if target_user_id in target_cr_ids:
+                return jsonify({'error': 'Cannot remove another CR'}), 403
 
         target_oid = ObjectId(target_user_id)
 
@@ -472,120 +532,203 @@ def remove_member(classroom_id):
         return jsonify({'error': 'Failed to remove member'}), 500
 
 
-@classroom_bp.route('/<classroom_id>/invite', methods=['POST'])
+@classroom_bp.route('/<classroom_id>/remove-member-avatar', methods=['POST'])
 @cross_origin()
 @token_required
-def invite_member(classroom_id):
-    """Send an email invite to join a classroom. CR only."""
+def remove_member_avatar(classroom_id):
+    """CR removes a member's profile photo with a reason."""
     from database import get_db
     from middleware import get_active_semester
-    from email_service import generate_classroom_invite_token, send_classroom_invite_email
-    import re
 
     try:
         data = request.get_json()
         cr_user_id = request.user['user_id']
-        email = data.get('email', '').strip().lower()
+        target_user_id = data.get('user_id', '').strip()
+        reason = data.get('reason', '').strip()
 
-        if not email or not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
-            return jsonify({'error': 'A valid email address is required'}), 400
+        if not target_user_id:
+            return jsonify({'error': 'User ID is required'}), 400
+        if not reason:
+            return jsonify({'error': 'Reason is required'}), 400
 
         db = get_db()
         classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
-
         if not classroom:
             return jsonify({'error': 'Classroom not found'}), 404
 
-        # Only CRs of the active semester can invite
         active_sem = get_active_semester(db, classroom_id)
         if not active_sem or cr_user_id not in [str(c) for c in active_sem.get('cr_ids', [])]:
-            return jsonify({'error': 'Only a CR can send invites'}), 403
+            return jsonify({'error': 'Only a CR can remove profile photos'}), 403
 
-        # Check if the email is already a member
-        existing_user = db.users.find_one({'email': email})
-        if existing_user and is_member_of_classroom(classroom, existing_user['_id']):
-            return jsonify({'error': 'This user is already a member'}), 400
+        target_oid = ObjectId(target_user_id)
+        if not is_member_of_classroom(classroom, target_oid):
+            return jsonify({'error': 'User is not a member'}), 400
 
-        # Get CR's username for the invite email
-        cr_user = db.users.find_one({'_id': ObjectId(cr_user_id)})
-        cr_name = cr_user['username'] if cr_user else 'A Class Representative'
+        target = db.users.find_one({'_id': target_oid})
+        if not target:
+            return jsonify({'error': 'User not found'}), 404
+        if not target.get('profile_picture'):
+            return jsonify({'error': 'User has no profile photo'}), 400
 
-        # Generate token and send email
-        token = generate_classroom_invite_token(classroom_id, cr_user_id, email)
-        email_sent = send_classroom_invite_email(email, classroom['name'], cr_name, token)
+        # Delete file from disk
+        avatars_dir = os.path.join(os.getcwd(), 'uploads', 'avatars')
+        filepath = os.path.join(avatars_dir, target['profile_picture'])
+        if os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+            except Exception as e:
+                logger.warning(f"Could not delete avatar file: {e}")
 
-        if not email_sent:
-            return jsonify({'error': 'Failed to send invite email. Check mail configuration.'}), 500
+        cr = db.users.find_one({'_id': ObjectId(cr_user_id)}, {'fullName': 1, 'username': 1})
+        cr_name = (cr.get('fullName') or cr.get('username', 'CR')) if cr else 'CR'
 
-        return jsonify({
-            'message': f'Invitation sent to {email}',
-            'email': email
-        }), 200
+        db.users.update_one(
+            {'_id': target_oid},
+            {'$set': {
+                'profile_picture': None,
+                'photo_removed_reason': reason,
+                'photo_removed_by': cr_name,
+                'photo_removed_at': datetime.utcnow()
+            }}
+        )
+
+        return jsonify({'message': 'Profile photo removed'}), 200
 
     except Exception as e:
-        logger.error(f"Invite member error: {e}")
-        return jsonify({'error': 'Failed to send invite'}), 500
+        logger.error(f"Remove member avatar error: {e}")
+        return jsonify({'error': 'Failed to remove photo'}), 500
 
 
-@classroom_bp.route('/accept-invite', methods=['POST'])
+@classroom_bp.route('/<classroom_id>/flag-member-name', methods=['POST'])
 @cross_origin()
 @token_required
-def accept_invite():
-    """Accept a classroom invitation using a token."""
+def flag_member_name(classroom_id):
+    """CR flags a member's display name as inappropriate; member is shown as Anonymous until they change it."""
     from database import get_db
-    from email_service import verify_token
+    from middleware import get_active_semester
 
     try:
         data = request.get_json()
-        token = data.get('token', '').strip()
-        user_id = request.user['user_id']
-        user_oid = ObjectId(user_id)
+        cr_user_id = request.user['user_id']
+        target_user_id = data.get('user_id', '').strip()
+        reason = data.get('reason', '').strip()
 
-        if not token:
-            return jsonify({'error': 'Invite token is required'}), 400
+        if not target_user_id:
+            return jsonify({'error': 'User ID is required'}), 400
+        if not reason:
+            return jsonify({'error': 'Reason is required'}), 400
 
         db = get_db()
-
-        # Verify and consume the token
-        token_doc = verify_token(token, 'classroom_invite')
-        if not token_doc:
-            return jsonify({'error': 'Invalid or expired invite link'}), 400
-
-        classroom_id = token_doc['classroomId']
         classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
-
         if not classroom:
-            return jsonify({'error': 'Classroom no longer exists'}), 404
+            return jsonify({'error': 'Classroom not found'}), 404
 
-        # Already a member?
-        if is_member_of_classroom(classroom, user_oid):
-            return jsonify({
-                'message': 'You are already a member of this classroom',
-                'classroom_id': classroom_id,
-                'classroom_name': classroom['name']
-            }), 200
+        active_sem = get_active_semester(db, classroom_id)
+        if not active_sem or cr_user_id not in [str(c) for c in active_sem.get('cr_ids', [])]:
+            return jsonify({'error': 'Only a CR can flag names'}), 403
 
-        # Add user to members
-        db.classrooms.update_one(
-            {'_id': classroom['_id']},
-            {
-                '$addToSet': {'members': user_oid},
-                '$set': {'updated_at': datetime.utcnow()}
-            }
+        target_oid = ObjectId(target_user_id)
+        if not is_member_of_classroom(classroom, target_oid):
+            return jsonify({'error': 'User is not a member'}), 400
+
+        target = db.users.find_one({'_id': target_oid})
+        if not target:
+            return jsonify({'error': 'User not found'}), 404
+
+        cr = db.users.find_one({'_id': ObjectId(cr_user_id)}, {'fullName': 1, 'username': 1})
+        cr_name = (cr.get('fullName') or cr.get('username', 'CR')) if cr else 'CR'
+
+        db.users.update_one(
+            {'_id': target_oid},
+            {'$set': {
+                'name_removed_reason': reason,
+                'name_removed_by': cr_name,
+                'name_removed_at': datetime.now(timezone.utc)
+            }}
         )
 
-        # Also remove from join_requests if they had a pending request
-        db.classrooms.update_one(
-            {'_id': classroom['_id']},
-            {'$pull': {'join_requests': {'user_id': user_oid}}}
-        )
-
-        return jsonify({
-            'message': f'You have joined {classroom["name"]}!',
-            'classroom_id': classroom_id,
-            'classroom_name': classroom['name']
-        }), 200
+        return jsonify({'message': 'Display name flagged. Member will be notified.'}), 200
 
     except Exception as e:
-        logger.error(f"Accept invite error: {e}")
-        return jsonify({'error': 'Failed to accept invite'}), 500
+        logger.error(f"Flag member name error: {e}")
+        return jsonify({'error': 'Failed to flag display name'}), 500
+
+
+@classroom_bp.route('/<classroom_id>', methods=['DELETE'])
+@cross_origin()
+@token_required
+def delete_classroom(classroom_id):
+    """Delete a classroom and all its data. CR only."""
+    from database import get_db
+    from middleware import get_active_semester
+
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+
+        classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
+        if not classroom:
+            return jsonify({'error': 'Classroom not found'}), 404
+
+        active_sem = get_active_semester(db, classroom_id)
+        if not active_sem or user_id not in [str(c) for c in active_sem.get('cr_ids', [])]:
+            return jsonify({'error': 'Only a CR can delete this classroom'}), 403
+
+        # Collect semester IDs for cascade
+        semester_ids = [str(s['_id']) for s in db.semesters.find({'classroom_id': classroom_id}, {'_id': 1})]
+
+        if semester_ids:
+            # Delete academic resource files + records
+            for r in db.academic_resources.find({'semester_id': {'$in': semester_ids}}):
+                if r.get('stored_name'):
+                    try:
+                        os.remove(os.path.join(os.getcwd(), 'uploads', 'academics', r['stored_name']))
+                    except OSError:
+                        pass
+            db.academic_resources.delete_many({'semester_id': {'$in': semester_ids}})
+            db.custom_sections.delete_many({'semester_id': {'$in': semester_ids}})
+            db.hidden_default_sections.delete_many({'semester_id': {'$in': semester_ids}})
+            db.cr_nominations.delete_many({'semester_id': {'$in': semester_ids}})
+            db.semester_sessions.delete_many({'semester_id': {'$in': semester_ids}})
+
+        # Delete subjects
+        db.subjects.delete_many({'classroom_id': classroom_id})
+
+        # Delete documents + files from disk
+        for doc in db.documents.find({'classroom_id': classroom_id}):
+            if doc.get('file_path') and os.path.exists(doc['file_path']):
+                try:
+                    os.remove(doc['file_path'])
+                except OSError:
+                    pass
+        db.documents.delete_many({'classroom_id': classroom_id})
+
+        # Delete chat messages + attached files
+        for msg in db.chat_messages.find({'classroom_id': classroom_id}):
+            file_path = (msg.get('file') or {}).get('path')
+            if file_path:
+                abs_path = os.path.join(os.getcwd(), file_path)
+                if os.path.exists(abs_path):
+                    try:
+                        os.remove(abs_path)
+                    except OSError:
+                        pass
+        db.chat_messages.delete_many({'classroom_id': classroom_id})
+        db.chat_read_status.delete_many({'classroom_id': classroom_id})
+
+        # Delete other classroom-level data
+        db.announcements.delete_many({'classroom_id': classroom_id})
+        db.todos.delete_many({'classroom_id': classroom_id})
+        db.schedule_requests.delete_many({'classroom_id': classroom_id})
+
+        # Delete semesters then the classroom itself
+        db.semesters.delete_many({'classroom_id': classroom_id})
+        db.classrooms.delete_one({'_id': ObjectId(classroom_id)})
+
+        return jsonify({'message': 'Classroom deleted'}), 200
+
+    except Exception as e:
+        logger.error(f"Delete classroom error: {e}")
+        return jsonify({'error': 'Failed to delete classroom'}), 500
+
+

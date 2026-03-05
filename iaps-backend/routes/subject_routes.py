@@ -1,3 +1,4 @@
+import os
 from flask import Blueprint, request, jsonify
 from flask_cors import cross_origin
 from datetime import datetime
@@ -5,6 +6,8 @@ from bson import ObjectId
 import logging
 
 from middleware import token_required, is_member_of_classroom
+
+UPLOAD_DIR = os.path.join(os.getcwd(), 'uploads', 'academics')
 
 subject_bp = Blueprint('subject', __name__, url_prefix='/api/subject')
 logger = logging.getLogger(__name__)
@@ -40,24 +43,37 @@ def create_subject():
         if not semester:
             return jsonify({'error': 'Semester not found'}), 404
 
-        if not is_cr_of(semester, user_id):
-            return jsonify({'error': 'Only a CR can add subjects'}), 403
+        # Verify classroom membership
+        classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
+        if not classroom or not is_member_of_classroom(classroom, user_id):
+            return jsonify({'error': 'Access denied'}), 403
 
-        # Prevent duplicate name within same semester (case-insensitive)
+        # Non-CRs can add personal subjects (only visible to themselves)
+        is_cr = is_cr_of(semester, user_id)
+        is_personal = not is_cr
+
+        # Prevent duplicate name within same scope (case-insensitive)
         import re
         escaped_name = re.escape(name)
-        existing = db.subjects.find_one({
-            'semester_id': semester_id,
-            'name': {'$regex': f'^{escaped_name}$', '$options': 'i'}
-        })
+        scope_filter = {'semester_id': semester_id, 'name': {'$regex': f'^{escaped_name}$', '$options': 'i'}}
+        if is_personal:
+            # Personal subjects: check only against this user's personal subjects
+            scope_filter['personal'] = True
+            scope_filter['created_by'] = user_id
+        else:
+            # Class subjects: check only against public subjects
+            scope_filter['$or'] = [{'personal': {'$ne': True}}]
+        existing = db.subjects.find_one(scope_filter)
         if existing:
-            return jsonify({'error': 'A subject with this name already exists in this semester'}), 400
+            label = 'personal subject' if is_personal else 'class subject'
+            return jsonify({'error': f'A {label} with this name already exists in this semester'}), 400
 
         subject = {
             'classroom_id': classroom_id,
             'semester_id': semester_id,
             'name': name,
             'code': code,
+            'personal': is_personal,
             'created_by': user_id,
             'created_at': datetime.utcnow()
         }
@@ -69,7 +85,9 @@ def create_subject():
             'subject': {
                 'id': str(result.inserted_id),
                 'name': name,
-                'code': code
+                'code': code,
+                'personal': is_personal,
+                'created_by': user_id,
             }
         }), 201
 
@@ -97,14 +115,21 @@ def list_subjects(semester_id):
         if not classroom or not is_member_of_classroom(classroom, user_id):
             return jsonify({'error': 'Access denied'}), 403
 
-        subjects = list(db.subjects.find(
-            {'semester_id': semester_id}
-        ).sort('created_at', 1))
+        # Return public subjects + this user's own personal subjects
+        subjects = list(db.subjects.find({
+            'semester_id': semester_id,
+            '$or': [
+                {'personal': {'$ne': True}},
+                {'personal': True, 'created_by': user_id},
+            ]
+        }).sort('created_at', 1))
 
         result = [{
             'id': str(s['_id']),
             'name': s['name'],
-            'code': s.get('code', '')
+            'code': s.get('code', ''),
+            'personal': s.get('personal', False),
+            'created_by': s.get('created_by', ''),
         } for s in subjects]
 
         return jsonify({'subjects': result}), 200
@@ -130,10 +155,40 @@ def delete_subject(subject_id):
             return jsonify({'error': 'Subject not found'}), 404
 
         semester = db.semesters.find_one({'_id': ObjectId(subject['semester_id'])})
-        if not semester or not is_cr_of(semester, user_id):
-            return jsonify({'error': 'Only a CR can delete subjects'}), 403
+        if not semester:
+            return jsonify({'error': 'Semester not found'}), 404
+
+        if subject.get('personal'):
+            # Personal subjects can only be deleted by their creator
+            if subject.get('created_by') != user_id:
+                return jsonify({'error': 'Only the creator can delete a personal subject'}), 403
+        else:
+            # Class subjects can only be deleted by a CR
+            if not is_cr_of(semester, user_id):
+                return jsonify({'error': 'Only a CR can delete class subjects'}), 403
 
         db.subjects.delete_one({'_id': ObjectId(subject_id)})
+
+        # Cascade: delete all academic resources (and their disk files) for this subject
+        resources = list(db.academic_resources.find(
+            {'semester_id': subject['semester_id'], 'subject_id': subject_id}
+        ))
+        for r in resources:
+            if r.get('stored_name'):
+                try:
+                    os.remove(os.path.join(UPLOAD_DIR, r['stored_name']))
+                except OSError:
+                    pass
+        db.academic_resources.delete_many(
+            {'semester_id': subject['semester_id'], 'subject_id': subject_id}
+        )
+        # Cascade: delete custom sections and hidden default section markers
+        db.custom_sections.delete_many(
+            {'semester_id': subject['semester_id'], 'subject_id': subject_id}
+        )
+        db.hidden_default_sections.delete_many(
+            {'semester_id': subject['semester_id'], 'subject_id': subject_id}
+        )
 
         return jsonify({'message': 'Subject deleted'}), 200
 

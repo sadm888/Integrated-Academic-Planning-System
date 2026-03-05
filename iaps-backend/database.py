@@ -50,8 +50,30 @@ class Database:
                 # You might want to manually drop it once: self._db.users.drop_index("username_1")
                 logger.warning(f"Could not create username index (may already exist): {e}")
 
-            # ... (rest of your classroom and document indexes remain the same)
-            
+            # google_tokens — one doc per user
+            self._db.google_tokens.create_index(
+                [("user_id", ASCENDING)], unique=True, name="google_tokens_user_id"
+            )
+
+            # schedule_requests — list by classroom, newest first
+            self._db.schedule_requests.create_index(
+                [("classroom_id", ASCENDING), ("created_at", DESCENDING)],
+                name="schedule_requests_classroom_created"
+            )
+
+            # chat_messages — ordered per classroom
+            self._db.chat_messages.create_index(
+                [("classroom_id", ASCENDING), ("created_at", ASCENDING)],
+                name="chat_messages_classroom_time"
+            )
+
+            # chat_read_status — one doc per user per classroom
+            self._db.chat_read_status.create_index(
+                [("user_id", ASCENDING), ("classroom_id", ASCENDING)],
+                unique=True,
+                name="chat_read_status_user_classroom"
+            )
+
             logger.info("Database indexes checked/created successfully")
         except Exception as e:
             logger.warning(f"Error creating indexes: {e}")

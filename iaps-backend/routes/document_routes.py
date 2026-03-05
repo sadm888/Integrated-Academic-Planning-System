@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 from flask_cors import cross_origin
 from datetime import datetime
 from bson import ObjectId
@@ -81,6 +81,7 @@ def upload_document():
             'type': doc_type,
             'filename': filename,
             'file_path': file_path,
+            'mime_type': file.mimetype or 'application/octet-stream',
             'use_for_ai': use_for_ai,
             'file_size': os.path.getsize(file_path),
             'created_at': datetime.utcnow()
@@ -156,6 +157,45 @@ def list_documents(semester_id):
     except Exception as e:
         logger.error(f"List documents error: {e}")
         return jsonify({'error': 'Server error fetching documents'}), 500
+
+
+@document_bp.route('/<document_id>/download', methods=['GET'])
+@cross_origin()
+def download_document(document_id):
+    """Serve a document file to a classroom member. Accepts token via query param or Authorization header."""
+    import jwt as pyjwt
+    from database import get_db
+    try:
+        SECRET_KEY = os.getenv('JWT_SECRET', 'dev-secret-change-in-production')
+        token = request.args.get('token') or request.headers.get('Authorization', '')
+        if token.startswith('Bearer '):
+            token = token[7:]
+        if not token:
+            return jsonify({'error': 'Token is missing'}), 401
+        try:
+            data = pyjwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        except pyjwt.ExpiredSignatureError:
+            return jsonify({'error': 'Token has expired'}), 401
+        except pyjwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid token'}), 401
+
+        user_id = data['user_id']
+        db = get_db()
+        doc = db.documents.find_one({'_id': ObjectId(document_id)})
+        if not doc:
+            return jsonify({'error': 'Document not found'}), 404
+        semester = db.semesters.find_one({'_id': ObjectId(doc['semester_id'])})
+        classroom = db.classrooms.find_one({'_id': ObjectId(semester['classroom_id'])}) if semester else None
+        if not classroom or not is_member_of_classroom(classroom, user_id):
+            return jsonify({'error': 'Access denied'}), 403
+        file_path = doc.get('file_path', '')
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found on disk'}), 404
+        mime = doc.get('mime_type') or 'application/octet-stream'
+        return send_file(file_path, mimetype=mime, as_attachment=False, download_name=doc.get('filename', 'file'))
+    except Exception as e:
+        logger.error(f"Download document error: {e}")
+        return jsonify({'error': 'Failed to serve document'}), 500
 
 
 @document_bp.route('/<document_id>', methods=['DELETE'])

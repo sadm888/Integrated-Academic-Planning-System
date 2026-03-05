@@ -6,6 +6,7 @@ import jwt
 import logging
 
 from middleware import token_required, SECRET_KEY
+from limiter_instance import limiter
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ def format_user(user):
 
 @auth_bp.route('/signup', methods=['POST'])
 @cross_origin()
+@limiter.limit('10 per hour')
 def signup():
     """Registration with email/password"""
     from database import get_db
@@ -101,6 +103,7 @@ def signup():
 
 @auth_bp.route('/login', methods=['POST'])
 @cross_origin()
+@limiter.limit('20 per minute; 100 per hour')
 def login():
     """Login with email + password"""
     from database import get_db

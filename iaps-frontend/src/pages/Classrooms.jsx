@@ -3,14 +3,20 @@ import { useNavigate } from 'react-router-dom';
 import { classroomAPI } from '../services/api';
 import '../styles/Classroom.css';
 
-function Classrooms({ user, onLogout }) {
+function Classrooms({ user }) {
   const navigate = useNavigate();
   const [classrooms, setClassrooms] = useState([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null); // { id, name }
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [newClassroom, setNewClassroom] = useState({
     name: '',
-    description: ''
+    description: '',
+    semester_number: '',
+    semester_type: 'odd',
+    year: '',
+    session: '',
   });
   const [joinCode, setJoinCode] = useState('');
   const [error, setError] = useState('');
@@ -23,8 +29,8 @@ function Classrooms({ user, onLogout }) {
 
   const fetchClassrooms = async () => {
     try {
-      const response = await classroomAPI.list();
-      setClassrooms(response.data.classrooms || []);
+      const res = await classroomAPI.list();
+      setClassrooms(res.data.classrooms || []);
     } catch (err) {
       console.error('Failed to fetch classrooms:', err);
     }
@@ -39,7 +45,7 @@ function Classrooms({ user, onLogout }) {
     try {
       const response = await classroomAPI.create(newClassroom);
       setSuccess(`Classroom created! Code: ${response.data.classroom.code}`);
-      setNewClassroom({ name: '', description: '' });
+      setNewClassroom({ name: '', description: '', semester_number: '', semester_type: 'odd', year: '', session: '' });
       setShowCreateModal(false);
       fetchClassrooms();
     } catch (err) {
@@ -65,6 +71,21 @@ function Classrooms({ user, onLogout }) {
       setError(err.response?.data?.error || 'Failed to send join request');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteClassroom = async () => {
+    if (!deleteTarget) return;
+    setDeleteLoading(true);
+    try {
+      await classroomAPI.delete(deleteTarget.id);
+      setDeleteTarget(null);
+      fetchClassrooms();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete classroom');
+      setDeleteTarget(null);
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -106,12 +127,6 @@ function Classrooms({ user, onLogout }) {
             onClick={() => setShowJoinModal(true)}
           >
             Join Classroom
-          </button>
-          <button
-            className="btn-secondary"
-            onClick={onLogout}
-          >
-            Logout
           </button>
         </div>
       </div>
@@ -159,12 +174,56 @@ function Classrooms({ user, onLogout }) {
                 <label>Description</label>
                 <textarea
                   value={newClassroom.description}
-                  onChange={(e) => setNewClassroom({
-                    ...newClassroom,
-                    description: e.target.value
-                  })}
+                  onChange={(e) => setNewClassroom({ ...newClassroom, description: e.target.value })}
                   placeholder="Brief description of the classroom"
                   rows="3"
+                  disabled={loading}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Semester Number</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={newClassroom.semester_number}
+                  onChange={(e) => setNewClassroom({ ...newClassroom, semester_number: e.target.value })}
+                  placeholder="e.g., 1"
+                  disabled={loading}
+                />
+                <small>Which semester is this? (1st, 2nd, 3rd...)</small>
+              </div>
+
+              <div className="form-group">
+                <label>First Semester Type *</label>
+                <select
+                  value={newClassroom.semester_type}
+                  onChange={(e) => setNewClassroom({ ...newClassroom, semester_type: e.target.value })}
+                  disabled={loading}
+                >
+                  <option value="odd">Odd</option>
+                  <option value="even">Even</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Year</label>
+                <input
+                  type="text"
+                  value={newClassroom.year}
+                  onChange={(e) => setNewClassroom({ ...newClassroom, year: e.target.value })}
+                  placeholder="e.g., 2024-2025"
+                  disabled={loading}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Session</label>
+                <input
+                  type="text"
+                  value={newClassroom.session}
+                  onChange={(e) => setNewClassroom({ ...newClassroom, session: e.target.value })}
+                  placeholder="e.g., Jul-Dec"
                   disabled={loading}
                 />
               </div>
@@ -182,6 +241,33 @@ function Classrooms({ user, onLogout }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Classroom Confirmation Modal */}
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h2>Delete Classroom</h2>
+            <p style={{ margin: '12px 0 20px', color: 'var(--text-secondary)' }}>
+              Are you sure you want to delete <strong>{deleteTarget.name}</strong>?
+              This will permanently remove all semesters, subjects, messages, files, and other data.
+              This cannot be undone.
+            </p>
+            <div className="modal-buttons">
+              <button type="button" onClick={() => setDeleteTarget(null)} disabled={deleteLoading}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteClassroom}
+                disabled={deleteLoading}
+                style={{ background: '#ef4444', color: 'white', border: 'none' }}
+              >
+                {deleteLoading ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
           </div>
         </div>
       )}

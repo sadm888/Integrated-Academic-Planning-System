@@ -28,7 +28,7 @@ def generate_verification_token(user_id):
     
     return token
 
-def generate_classroom_invite_token(classroom_id, invited_by, email):
+def generate_classroom_invite_token(classroom_id, invited_by, email=None):
     """Generate classroom invite token"""
     token = secrets.token_urlsafe(32)
     database = db.get_db()

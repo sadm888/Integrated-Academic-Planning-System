@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { authAPI } from '../services/api';
 import '../styles/Auth.css';
@@ -11,6 +11,7 @@ const Login = ({ onAuthSuccess }) => {
   });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const pwRef = useRef(null);
 
   const handleChange = (e) => {
     setFormData({
@@ -59,14 +60,33 @@ const Login = ({ onAuthSuccess }) => {
 
           <div className="form-group">
             <label>Password</label>
-            <input
-              type="password"
-              name="password"
-              value={formData.password}
-              onChange={handleChange}
-              required
-              placeholder="••••••••"
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                ref={pwRef}
+                type="password"
+                name="password"
+                value={formData.password}
+                onChange={handleChange}
+                required
+                placeholder="••••••••"
+                style={{ paddingRight: '52px' }}
+              />
+              <button
+                type="button"
+                onPointerDown={(e) => { e.preventDefault(); if (pwRef.current) pwRef.current.type = 'text'; }}
+                onPointerUp={() => { if (pwRef.current) pwRef.current.type = 'password'; }}
+                onPointerLeave={() => { if (pwRef.current) pwRef.current.type = 'password'; }}
+                tabIndex={-1}
+                title="Hold to show password"
+                style={{
+                  position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)',
+                  background: 'var(--bg-color)', border: '1px solid var(--border-color)',
+                  borderRadius: '5px', cursor: 'pointer',
+                  color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 600,
+                  padding: '3px 8px', lineHeight: 1.3, userSelect: 'none',
+                }}
+              >👁</button>
+            </div>
           </div>
 
           <button type="submit" disabled={isLoading} className="btn-primary">

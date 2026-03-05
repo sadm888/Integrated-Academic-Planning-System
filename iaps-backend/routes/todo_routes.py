@@ -24,6 +24,7 @@ def create_todo():
         classroom_id = data.get('classroom_id', '').strip()
         semester_id = data.get('semester_id', '').strip()
         text = data.get('text', '').strip()
+        subject_id = (data.get('subject_id') or '').strip() or None
 
         if not all([classroom_id, semester_id, text]):
             return jsonify({'error': 'Classroom ID, semester ID, and text are required'}), 400
@@ -42,6 +43,7 @@ def create_todo():
             'classroom_id': classroom_id,
             'semester_id': semester_id,
             'text': text,
+            'subject_id': subject_id,
             'completed': False,
             'created_by': user_id,
             'created_at': datetime.utcnow(),
@@ -58,6 +60,7 @@ def create_todo():
             'todo': {
                 'id': str(result.inserted_id),
                 'text': text,
+                'subject_id': subject_id,
                 'completed': False,
                 'created_by': {
                     'id': user_id,
@@ -92,7 +95,7 @@ def list_todos(semester_id):
             return jsonify({'error': 'Access denied'}), 403
 
         todos = list(db.todos.find(
-            {'semester_id': semester_id}
+            {'semester_id': semester_id, 'created_by': user_id}
         ).sort('created_at', -1))
 
         result = []
@@ -101,6 +104,7 @@ def list_todos(semester_id):
             result.append({
                 'id': str(todo['_id']),
                 'text': todo['text'],
+                'subject_id': todo.get('subject_id'),
                 'completed': todo.get('completed', False),
                 'created_by': {
                     'id': todo['created_by'],
@@ -131,9 +135,8 @@ def toggle_todo(todo_id):
         if not todo:
             return jsonify({'error': 'Todo not found'}), 404
 
-        classroom = db.classrooms.find_one({'_id': ObjectId(todo['classroom_id'])})
-        if not classroom or not is_member_of_classroom(classroom, user_id):
-            return jsonify({'error': 'Access denied'}), 403
+        if todo['created_by'] != user_id:
+            return jsonify({'error': 'Permission denied'}), 403
 
         new_value = not todo.get('completed', False)
         db.todos.update_one(
@@ -166,13 +169,7 @@ def delete_todo(todo_id):
         if not todo:
             return jsonify({'error': 'Todo not found'}), 404
 
-        is_owner = todo['created_by'] == user_id
-
-        # Check if CR of the semester
-        semester = db.semesters.find_one({'_id': ObjectId(todo['semester_id'])})
-        is_cr = semester and str(user_id) in [str(c) for c in semester.get('cr_ids', [])]
-
-        if not (is_owner or is_cr):
+        if todo['created_by'] != user_id:
             return jsonify({'error': 'Permission denied'}), 403
 
         db.todos.delete_one({'_id': ObjectId(todo_id)})

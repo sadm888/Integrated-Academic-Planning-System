@@ -3,6 +3,8 @@ from flask_cors import CORS
 from config import Config
 from database import db
 from email_service import init_mail
+from socketio_instance import socketio
+from limiter_instance import limiter
 import logging
 
 # Configure logging
@@ -14,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 def create_app():
     """Application factory pattern"""
+    import os
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'  # allow OAuth over HTTP in local dev
+
     app = Flask(__name__)
     
     # Load configuration
@@ -29,6 +34,8 @@ def create_app():
          expose_headers=['Content-Type', 'Authorization'])
     
     # Initialize extensions
+    limiter.init_app(app)
+
     try:
         init_mail(app)
     except Exception as e:
@@ -48,17 +55,44 @@ def create_app():
     from routes.classroom_routes import classroom_bp
     from routes.semester_routes import semester_bp
     from routes.document_routes import document_bp
-    from routes.ai_routes import ai_bp
     from routes.todo_routes import todo_bp
     from routes.subject_routes import subject_bp
+    from routes.calendar_routes import calendar_bp
+    from routes.schedule_routes import schedule_bp
+    from routes.chat_routes import chat_bp  # also registers Socket.IO events
+    from routes.settings_routes import settings_bp
+    from routes.academic_routes import academic_bp
+    from routes.announcement_routes import announcement_bp
+    from routes.dm_routes import dm_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(classroom_bp)
     app.register_blueprint(semester_bp)
     app.register_blueprint(document_bp)
-    app.register_blueprint(ai_bp)
     app.register_blueprint(todo_bp)
     app.register_blueprint(subject_bp)
+    app.register_blueprint(calendar_bp)
+    app.register_blueprint(schedule_bp)
+    app.register_blueprint(chat_bp)
+    app.register_blueprint(settings_bp)
+    app.register_blueprint(academic_bp)
+    app.register_blueprint(announcement_bp)
+    app.register_blueprint(dm_bp)
+
+    # Ensure avatar upload directory exists
+    import os as _os
+    _os.makedirs(_os.path.join(_os.getcwd(), 'uploads', 'avatars'), exist_ok=True)
+
+    # Initialise Socket.IO (must come after CORS is configured)
+    socketio.init_app(
+        app,
+        cors_allowed_origins=[
+            'http://localhost:3000', 'http://127.0.0.1:3000',
+            'http://localhost:5173', 'http://127.0.0.1:5173',
+        ],
+        async_mode='threading',
+        max_http_buffer_size=50 * 1024 * 1024,
+    )
     
     @app.route('/api/health', methods=['GET'])
     def health_check():
@@ -88,9 +122,10 @@ def create_app():
 
 if __name__ == '__main__':
     app = create_app()
-    app.run(
+    socketio.run(
+        app,
         host='0.0.0.0',
-        port=5000,
+        port=5001,
         debug=True,
-        use_reloader=False 
+        use_reloader=False,
     )
