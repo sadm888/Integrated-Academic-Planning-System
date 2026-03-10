@@ -309,7 +309,6 @@ def list_resources(semester_id):
         db = get_db()
         if not _is_member(db, semester_id, user_id):
             return jsonify({'error': 'Not a member'}), 403
-        is_cr = _is_cr(db, semester_id, user_id)
         query = {'semester_id': semester_id}
         subject_id = request.args.get('subject_id')
         if subject_id:
@@ -317,6 +316,7 @@ def list_resources(semester_id):
         resources = list(db.academic_resources.find(query, sort=[('created_at', 1)]))
 
         # For PYQ/Books: non-CR members only see public files OR their own private files
+        is_cr = _is_cr(db, semester_id, user_id)
         if not is_cr:
             resources = [
                 r for r in resources
@@ -347,41 +347,60 @@ def list_subject_sections(semester_id, subject_id):
         if not _is_member(db, semester_id, user_id):
             return jsonify({'error': 'Not a member'}), 403
 
-        hidden = _get_hidden_sections(db, semester_id, subject_id)
+        is_cr = _is_cr(db, semester_id, user_id)
+        hidden = _get_hidden_sections(db, semester_id, subject_id)  # global CR hide
 
-        defaults = [
-            {
+        # Per-user hidden pyq/books sections (personal, non-destructive)
+        user_hidden = {
+            h['category']
+            for h in db.user_hidden_sections.find({
+                'user_id': user_id,
+                'semester_id': semester_id,
+                'subject_id': subject_id,
+            })
+        }
+
+        defaults = []
+        for cat in DEFAULT_CATEGORIES:
+            if cat in hidden:
+                continue  # globally hidden by CR — skip for everyone
+            defaults.append({
                 'id': cat,
                 'name': CATEGORY_LABELS[cat],
                 'is_default': True,
                 'cr_only': cat in CR_ONLY_CATEGORIES,
                 'non_deletable': cat in NON_DELETABLE_DEFAULTS,
-            }
-            for cat in DEFAULT_CATEGORIES
-            if cat not in hidden
-        ]
+                'hidden': False,
+                'user_hidden': cat in user_hidden,
+            })
 
-        custom = [
-            {
+        custom = []
+        for s in db.custom_sections.find(
+            {'semester_id': semester_id, 'subject_id': subject_id},
+            sort=[('created_at', 1)],
+        ):
+            created_by = s.get('created_by', '')
+            is_private = s.get('is_private', False)
+            # Private sections only visible to their creator and CRs
+            if is_private and created_by != user_id and not is_cr:
+                continue
+            custom.append({
                 'id': str(s['_id']),
                 'name': s['name'],
                 'is_default': False,
                 'cr_only': False,
                 'non_deletable': False,
-            }
-            for s in db.custom_sections.find(
-                {'semester_id': semester_id, 'subject_id': subject_id},
-                sort=[('created_at', 1)],
-            )
-        ]
+                'hidden': False,
+                'user_hidden': False,
+                'created_by': created_by,
+                'is_private': is_private,
+            })
 
-        # For CRs, also include toggled-off defaults so they can re-enable them
-        is_cr = _is_cr(db, semester_id, user_id)
         subject_doc = db.subjects.find_one({'_id': ObjectId(subject_id), 'semester_id': semester_id}) if subject_id else None
         is_subject_owner = bool(subject_doc and subject_doc.get('personal') and str(subject_doc.get('created_by')) == user_id)
 
         if is_cr or is_subject_owner:
-            # Add back hidden sections with hidden=True flag so CR/owner can toggle them
+            # Add back globally-hidden defaults so CR/owner can re-enable them
             for cat in DELETABLE_DEFAULTS:
                 if cat in hidden:
                     defaults.append({
@@ -391,11 +410,8 @@ def list_subject_sections(semester_id, subject_id):
                         'cr_only': cat in CR_ONLY_CATEGORIES,
                         'non_deletable': False,
                         'hidden': True,
+                        'user_hidden': False,
                     })
-            # Mark visible defaults as hidden=False
-            for d in defaults:
-                if 'hidden' not in d:
-                    d['hidden'] = False
         return jsonify({'sections': defaults + custom}), 200
     except Exception as e:
         logger.error(f"list_subject_sections error: {e}")
@@ -530,6 +546,71 @@ def toggle_section_visibility(semester_id, subject_id, section_id):
         return jsonify({'error': 'Failed to toggle section'}), 500
 
 
+@academic_bp.route('/<semester_id>/subjects/<subject_id>/sections/<section_id>/user-hide', methods=['POST'])
+@cross_origin()
+@token_required
+def user_hide_section(semester_id, subject_id, section_id):
+    """Per-user non-destructive hide/show of PYQ/Books sections (doesn't delete files)."""
+    from database import get_db
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+        if not _is_member(db, semester_id, user_id):
+            return jsonify({'error': 'Not a member'}), 403
+        if section_id not in DELETABLE_DEFAULTS:
+            return jsonify({'error': 'Only PYQ and Books sections can be locked'}), 400
+        existing = db.user_hidden_sections.find_one({
+            'user_id': user_id, 'semester_id': semester_id,
+            'subject_id': subject_id, 'category': section_id,
+        })
+        if existing:
+            db.user_hidden_sections.delete_one({'_id': existing['_id']})
+            return jsonify({'user_hidden': False}), 200
+        else:
+            db.user_hidden_sections.insert_one({
+                'user_id': user_id, 'semester_id': semester_id,
+                'subject_id': subject_id, 'category': section_id,
+            })
+            return jsonify({'user_hidden': True}), 200
+    except Exception as e:
+        logger.error(f"user_hide_section error: {e}")
+        return jsonify({'error': 'Failed to toggle section visibility'}), 500
+
+
+@academic_bp.route('/<semester_id>/subjects/<subject_id>/sections/<section_id>/lock', methods=['POST'])
+@cross_origin()
+@token_required
+def lock_custom_section(semester_id, subject_id, section_id):
+    """Toggle is_private on a custom section. Only the creator or a CR can lock/unlock."""
+    from database import get_db
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+        if not _is_member(db, semester_id, user_id):
+            return jsonify({'error': 'Not a member'}), 403
+        try:
+            section = db.custom_sections.find_one({
+                '_id': ObjectId(section_id),
+                'semester_id': semester_id,
+                'subject_id': subject_id,
+            })
+        except Exception:
+            return jsonify({'error': 'Invalid section ID'}), 400
+        if not section:
+            return jsonify({'error': 'Section not found'}), 404
+        if section.get('created_by') != user_id and not _is_cr(db, semester_id, user_id):
+            return jsonify({'error': 'Not authorized'}), 403
+        new_is_private = not section.get('is_private', False)
+        db.custom_sections.update_one(
+            {'_id': ObjectId(section_id)},
+            {'$set': {'is_private': new_is_private}},
+        )
+        return jsonify({'is_private': new_is_private}), 200
+    except Exception as e:
+        logger.error(f"lock_custom_section error: {e}")
+        return jsonify({'error': 'Failed to toggle section lock'}), 500
+
+
 # ─── Section Folders (sub-folders inside a section) ───────────────────────────
 
 @academic_bp.route('/<semester_id>/subjects/<subject_id>/sections/<section_id>/folders', methods=['GET'])
@@ -650,9 +731,11 @@ def upload_resource(semester_id):
 
         folder_id = request.form.get('folder_id', '').strip() or None
 
-        # is_public: CR can mark PYQ/Books files as private (visible only to them)
+        # is_public: CRs choose public/private for PYQ/Books; non-CRs always private
         is_public_raw = request.form.get('is_public', 'true').lower()
         is_public = is_public_raw != 'false'
+        if category in ('pyq', 'books') and not _is_cr(db, semester_id, user_id):
+            is_public = False  # members' uploads to Books/PYQ are always private
 
         resource = {
             'semester_id': semester_id,
@@ -952,10 +1035,19 @@ def serve_academic_file(resource_id):
             return jsonify({'error': 'Not a member'}), 403
 
         if resource.get('source') == 'chat' and resource.get('chat_message_id'):
-            raw_token = request.args.get('token', '')
-            return redirect(
-                f"/api/chat/file/{resource['chat_message_id']}?token={raw_token}",
-                code=302,
+            chat_msg = db.chat_messages.find_one({'_id': ObjectId(resource['chat_message_id'])})
+            if not chat_msg or not chat_msg.get('file') or chat_msg.get('deleted_for_everyone'):
+                # Stale reference — clean up and return gone
+                db.academic_resources.delete_one({'_id': resource['_id']})
+                return jsonify({'error': 'File no longer available'}), 410
+            abs_path = os.path.join(os.getcwd(), chat_msg['file']['path'])
+            if not os.path.exists(abs_path):
+                return jsonify({'error': 'File not found on disk'}), 404
+            return send_file(
+                abs_path,
+                mimetype=chat_msg['file'].get('mime_type', 'application/octet-stream'),
+                as_attachment=False,
+                download_name=chat_msg['file'].get('name', 'file'),
             )
 
         abs_path = os.path.join(UPLOAD_DIR, resource.get('stored_name', ''))

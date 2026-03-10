@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import '../styles/About.css';
+import { BookOpen, Calendar, BarChart2 } from 'lucide-react';
 
 const About = () => {
   const navigate = useNavigate();
@@ -27,7 +28,7 @@ const About = () => {
           <h2>Core Features</h2>
           <div className="features-grid">
             <div className="feature-card">
-              <h3>📚 Session-Based Architecture</h3>
+              <h3><BookOpen size={18} strokeWidth={1.75} style={{ verticalAlign: 'middle', marginRight: '6px' }} />Session-Based Architecture</h3>
               <p>
                 Complete semester history tracking with read-only archival and
                 clean data separation for accurate CGPA computation.
@@ -43,7 +44,7 @@ const About = () => {
             </div>
 
             <div className="feature-card">
-              <h3>📅 Smart Calendar Sync</h3>
+              <h3><Calendar size={18} strokeWidth={1.75} style={{ verticalAlign: 'middle', marginRight: '6px' }} />Smart Calendar Sync</h3>
               <p>
                 Google Calendar integration with approval workflow to prevent
                 unauthorized calendar pollution.
@@ -59,7 +60,7 @@ const About = () => {
             </div>
 
             <div className="feature-card">
-              <h3>📊 Analytics & Insights</h3>
+              <h3><BarChart2 size={18} strokeWidth={1.75} style={{ verticalAlign: 'middle', marginRight: '6px' }} />Analytics & Insights</h3>
               <p>
                 Track marks, calculate required scores for target grades, and
                 analyze performance across semesters.

@@ -7,50 +7,117 @@
 .classroom-header-section {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 40px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* Sub-navbar (replaces action-buttons) */
+.page-subnav {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: rgba(102, 126, 234, 0.07);
+  border: 1px solid rgba(102, 126, 234, 0.18);
+  border-radius: 10px;
+  margin-bottom: 28px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+  padding: 4px 6px;
+}
+
+.page-subnav-item {
+  background: none;
+  border: none;
+  border-radius: 7px;
+  padding: 7px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #667eea;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+  display: inline-block;
+  transition: background 0.15s, color 0.15s;
+  font-family: inherit;
+}
+
+.page-subnav-item:hover {
+  background: rgba(102, 126, 234, 0.12);
+}
+
+.page-subnav-item.accent {
+  color: #4338ca;
+}
+
+.page-subnav-item.accent:hover {
+  background: rgba(67, 56, 202, 0.1);
+}
+
+.page-subnav-item.warning {
+  color: #92400e;
+}
+
+.page-subnav-item.warning:hover {
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.page-subnav-item.danger {
+  color: #dc2626;
+}
+
+.page-subnav-item.danger:hover {
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.page-subnav-spacer {
+  flex: 1;
 }
 
 .classroom-header-section h1 {
-  font-size: 32px;
+  font-size: 26px;
   color: var(--text-primary);
   margin: 0;
 }
 
 .action-buttons {
   display: flex;
-  gap: 15px;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .btn-primary,
 .btn-secondary {
-  padding: 12px 24px;
+  padding: 9px 18px;
   border: none;
   border-radius: 8px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s;
+  white-space: nowrap;
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #667eea;
   color: white;
 }
 
 .btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+  opacity: 0.88;
 }
 
 .btn-secondary {
-  background: var(--card-bg);
+  background: rgba(102, 126, 234, 0.1);
   color: #667eea;
-  border: 2px solid #667eea;
+  border: none;
 }
 
 .btn-secondary:hover {
-  background: #f0f4ff;
+  background: rgba(102, 126, 234, 0.18);
 }
 
 .error-message,

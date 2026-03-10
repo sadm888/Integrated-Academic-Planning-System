@@ -71,6 +71,7 @@ def _delete_message_and_cascade(db, message_id, semester_id):
 
 
 def _serialize_message(msg, profile_picture=None):
+    deleted = msg.get('deleted_for_everyone', False)
     result = {
         'id': str(msg['_id']),
         'type': msg.get('type'),
@@ -78,10 +79,11 @@ def _serialize_message(msg, profile_picture=None):
         'username': msg['username'],
         'full_name': msg.get('full_name') or '',
         'profile_picture': profile_picture,
-        'text': msg.get('text'),
-        'created_at': msg['created_at'].isoformat(),
+        'text': None if deleted else msg.get('text'),
+        'created_at': msg['created_at'].isoformat() + 'Z',
+        'deleted_for_everyone': deleted,
     }
-    if msg.get('file'):
+    if msg.get('file') and not deleted:
         result['file'] = msg['file']
     return result
 
@@ -213,7 +215,7 @@ def get_messages(semester_id):
             return jsonify({'error': 'Not a member'}), 403
         limit = min(int(request.args.get('limit', 50)), 200)
         before_id = request.args.get('before_id', '')
-        query = {'semester_id': semester_id}
+        query = {'semester_id': semester_id, 'hidden_for': {'$nin': [user_id]}}
         if before_id:
             try:
                 query['_id'] = {'$lt': ObjectId(before_id)}
@@ -341,6 +343,8 @@ def serve_file(message_id):
             return jsonify({'error': 'Message not found'}), 404
         if not _is_semester_member(db, msg['semester_id'], user_id):
             return jsonify({'error': 'Not a member'}), 403
+        if msg.get('deleted_for_everyone'):
+            return jsonify({'error': 'This file has been deleted'}), 410
         file_info = msg.get('file')
         if not file_info:
             return jsonify({'error': 'No file in this message'}), 404
@@ -615,12 +619,42 @@ def delete_message(semester_id, message_id):
         if not msg:
             return jsonify({'error': 'Message not found'}), 404
 
-        if msg['user_id'] != user_id and not _is_cr_or_mod(db, semester_id, user_id):
-            return jsonify({'error': 'Not authorized'}), 403
+        mode = request.args.get('mode', '')  # 'for_me' | 'for_everyone' | ''
 
-        _delete_message_and_cascade(db, message_id, semester_id)
-        socketio.emit('message_deleted', {'message_id': message_id}, room=semester_id)
-        return jsonify({'message': 'Message deleted'}), 200
+        if mode == 'for_me':
+            db.chat_messages.update_one(
+                {'_id': ObjectId(message_id)},
+                {'$addToSet': {'hidden_for': user_id}}
+            )
+            return jsonify({'message': 'Message hidden'}), 200
+
+        if msg['user_id'] == user_id:
+            if mode == 'for_everyone':
+                # Delete physical file and linked academic resources first
+                if msg.get('file') and msg['file'].get('path'):
+                    try:
+                        abs_path = os.path.join(os.getcwd(), msg['file']['path'])
+                        if os.path.exists(abs_path):
+                            os.remove(abs_path)
+                    except OSError:
+                        pass
+                db.academic_resources.delete_many({'chat_message_id': str(msg['_id']), 'source': 'chat'})
+                db.chat_messages.update_one(
+                    {'_id': ObjectId(message_id)},
+                    {'$set': {'deleted_for_everyone': True, 'text': None, 'file': None}}
+                )
+                socketio.emit('message_tombstoned', {'message_id': message_id}, room=semester_id)
+                return jsonify({'message': 'Message deleted for everyone'}), 200
+            else:
+                _delete_message_and_cascade(db, message_id, semester_id)
+                socketio.emit('message_deleted', {'message_id': message_id}, room=semester_id)
+                return jsonify({'message': 'Message deleted'}), 200
+        elif _is_cr_or_mod(db, semester_id, user_id):
+            _delete_message_and_cascade(db, message_id, semester_id)
+            socketio.emit('message_deleted', {'message_id': message_id}, room=semester_id)
+            return jsonify({'message': 'Message deleted'}), 200
+        else:
+            return jsonify({'error': 'Not authorized'}), 403
     except Exception as e:
         logger.error(f"delete_message error: {e}")
         return jsonify({'error': 'Failed to delete message'}), 500

@@ -25,6 +25,7 @@ def create_todo():
         semester_id = data.get('semester_id', '').strip()
         text = data.get('text', '').strip()
         subject_id = (data.get('subject_id') or '').strip() or None
+        due_date = (data.get('due_date') or '').strip() or None
 
         if not all([classroom_id, semester_id, text]):
             return jsonify({'error': 'Classroom ID, semester ID, and text are required'}), 400
@@ -44,6 +45,7 @@ def create_todo():
             'semester_id': semester_id,
             'text': text,
             'subject_id': subject_id,
+            'due_date': due_date,
             'completed': False,
             'created_by': user_id,
             'created_at': datetime.utcnow(),
@@ -61,6 +63,7 @@ def create_todo():
                 'id': str(result.inserted_id),
                 'text': text,
                 'subject_id': subject_id,
+                'due_date': due_date,
                 'completed': False,
                 'created_by': {
                     'id': user_id,
@@ -105,6 +108,7 @@ def list_todos(semester_id):
                 'id': str(todo['_id']),
                 'text': todo['text'],
                 'subject_id': todo.get('subject_id'),
+                'due_date': todo.get('due_date'),
                 'completed': todo.get('completed', False),
                 'created_by': {
                     'id': todo['created_by'],

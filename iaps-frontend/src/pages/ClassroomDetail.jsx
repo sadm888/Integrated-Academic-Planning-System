@@ -3,8 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { classroomAPI, semesterAPI, settingsAPI, dmAPI } from '../services/api';
 import FilePickerModal from '../components/FilePickerModal';
 import { useDMSocket } from '../hooks/useDMSocket';
+import { io } from 'socket.io-client';
+import { BACKEND_URL } from '../services/api';
 import Avatar from '../components/Avatar';
 import '../styles/Classroom.css';
+import { Bell, MessageSquare, EyeOff, Check, Eye, Trash2, Paperclip, X, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { FileTypeIcon } from '../utils/fileUtils';
 
 function ClassroomDetail({ user, onDmRead }) {
   const { classroomId } = useParams();
@@ -36,10 +40,36 @@ function ClassroomDetail({ user, onDmRead }) {
   const [pendingDmFile, setPendingDmFile] = useState(null);
   const [memberDmStats, setMemberDmStats] = useState({}); // { user_id: count }
   const [unreadBySender, setUnreadBySender] = useState({}); // { user_id: unread_count }
+  const [activity, setActivity] = useState(null); // { announcements, unread_chat, pending_requests }
+  const [crNotifications, setCrNotifications] = useState([]);
+  const [pendingNominations, setPendingNominations] = useState([]);
   const dmBottomRef = useRef(null);
   const dmFileInputRef = useRef(null);
 
   useEffect(() => { loadClassroomData(); }, [classroomId]);
+
+  // Persistent socket for personal notifications (CR nominations, etc.)
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    const socket = io(BACKEND_URL, { query: { token }, transports: ['websocket', 'polling'] });
+    socket.on('cr_nominated', () => {
+      classroomAPI.getPendingNominations(classroomId)
+        .then(r => setPendingNominations(r.data.nominations || []))
+        .catch(() => {});
+    });
+    socket.on('cr_transfer_result', () => { loadClassroomData(); });
+    return () => socket.disconnect();
+  }, [classroomId]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      classroomAPI.getActivity(classroomId)
+        .then(r => setActivity(r.data))
+        .catch(() => {});
+    }, 86400000);
+    return () => clearInterval(interval);
+  }, [classroomId]);
 
   // DM socket — connects only when a DM thread is open
   const { connected: dmConnected } = useDMSocket(
@@ -55,6 +85,17 @@ function ClassroomDetail({ user, onDmRead }) {
       }, []),
       onDeleted: useCallback(({ message_id }) => {
         setDmMessages(prev => prev.filter(m => m.id !== message_id));
+      }, []),
+      onTombstoned: useCallback(({ message_id }) => {
+        setDmMessages(prev => prev.map(m =>
+          m.id === message_id ? { ...m, deleted_for_everyone: true, text: null, file: null } : m
+        ));
+      }, []),
+      onRead: useCallback(({ reader_id }) => {
+        setDmMessages(prev => prev.map(m => ({
+          ...m,
+          read_by: m.read_by?.includes(reader_id) ? m.read_by : [...(m.read_by || []), reader_id],
+        })));
       }, []),
     }
   );
@@ -85,7 +126,15 @@ function ClassroomDetail({ user, onDmRead }) {
 
   const loadClassroomData = async () => {
     try {
-      const res = await classroomAPI.getDetails(classroomId);
+      const [res] = await Promise.all([
+        classroomAPI.getDetails(classroomId),
+        classroomAPI.getCrNotifications(classroomId)
+          .then(r => setCrNotifications(r.data.notifications || []))
+          .catch(() => {}),
+        classroomAPI.getPendingNominations(classroomId)
+          .then(r => setPendingNominations(r.data.nominations || []))
+          .catch(() => {}),
+      ]);
       const c = res.data.classroom;
       setClassroom(c);
       // Load per-member DM send counts for CRs
@@ -97,6 +146,10 @@ function ClassroomDetail({ user, onDmRead }) {
       // Load unread DM counts per sender for all members
       dmAPI.getUnreadBySender(classroomId)
         .then(r => setUnreadBySender(r.data.unread || {}))
+        .catch(() => {});
+      // Load classroom activity (notifications)
+      classroomAPI.getActivity(classroomId)
+        .then(r => setActivity(r.data))
         .catch(() => {});
     } catch (err) {
       setError('Failed to load classroom data');
@@ -135,9 +188,12 @@ function ClassroomDetail({ user, onDmRead }) {
     } finally { setDmSending(false); }
   };
 
-  const deleteDmMessage = async (messageId) => {
+  const deleteDmMessage = async (messageId, mode = 'for_everyone') => {
     try {
-      await dmAPI.deleteMessage(classroomId, messageId);
+      await dmAPI.deleteMessage(classroomId, messageId, mode);
+      if (mode === 'for_me') {
+        setDmMessages(prev => prev.filter(m => m.id !== messageId));
+      }
     } catch (err) {
       setDmError(err.response?.data?.error || 'Failed to delete');
     }
@@ -233,6 +289,54 @@ function ClassroomDetail({ user, onDmRead }) {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteConfirmName, setDeleteConfirmName] = useState('');
 
+  // Quit CR
+  const [showQuitCrModal, setShowQuitCrModal] = useState(false);
+  const [quitCrLoading, setQuitCrLoading] = useState(false);
+  const [quitCrError, setQuitCrError] = useState('');
+
+  const handleQuitCr = async () => {
+    setQuitCrLoading(true);
+    setQuitCrError('');
+    try {
+      await classroomAPI.quitCr(classroomId, activeSemester?.id);
+      setShowQuitCrModal(false);
+      await loadClassroomData();
+    } catch (err) {
+      setQuitCrError(err.response?.data?.error || 'Failed to quit CR role');
+    } finally {
+      setQuitCrLoading(false);
+    }
+  };
+
+  // CR Transfer & Co-CR (for active semester)
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferNomineeId, setTransferNomineeId] = useState('');
+  const [transferLoading, setTransferLoading] = useState(false);
+  const [showAddCrModal, setShowAddCrModal] = useState(false);
+  const [addCrTargetId, setAddCrTargetId] = useState('');
+  const [addCrLoading, setAddCrLoading] = useState(false);
+
+  const handleAcceptNomination = async (semId) => {
+    setPendingNominations(prev => prev.filter(n => n.semester_id !== semId));
+    try {
+      await semesterAPI.acceptCr(semId);
+      setSuccess('You are now the CR!');
+      loadClassroomData();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to accept nomination');
+      loadClassroomData(); // re-fetch in case of error
+    }
+  };
+
+  const handleDeclineNomination = async (semId) => {
+    setPendingNominations(prev => prev.filter(n => n.semester_id !== semId));
+    try {
+      await semesterAPI.declineCr(semId);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to decline nomination');
+    }
+  };
+
   const handleDeleteClassroom = async () => {
     if (deleteConfirmName !== classroom?.name) return;
     setDeleteLoading(true);
@@ -244,6 +348,36 @@ function ClassroomDetail({ user, onDmRead }) {
       setError(err.response?.data?.error || 'Failed to delete classroom');
       setDeleteLoading(false);
     }
+  };
+
+  const handleAddCoCr = async (e) => {
+    e.preventDefault();
+    if (!addCrTargetId || !activeSemester) return;
+    setAddCrLoading(true);
+    setError('');
+    try {
+      await semesterAPI.nominateAddCr(activeSemester.id, addCrTargetId);
+      setSuccess('Co-CR nomination sent. They must accept to get CR access.');
+      setShowAddCrModal(false);
+      setAddCrTargetId('');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to send co-CR nomination');
+    } finally { setAddCrLoading(false); }
+  };
+
+  const handleNominateCr = async (e) => {
+    e.preventDefault();
+    if (!transferNomineeId || !activeSemester) return;
+    setTransferLoading(true);
+    setError('');
+    try {
+      await semesterAPI.nominateCr(activeSemester.id, transferNomineeId);
+      setSuccess('Nomination sent. The member must accept to complete the transfer.');
+      setShowTransferModal(false);
+      setTransferNomineeId('');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to send nomination');
+    } finally { setTransferLoading(false); }
   };
 
   const generateSemesterName = (type, year, session) => {
@@ -300,51 +434,186 @@ function ClassroomDetail({ user, onDmRead }) {
   const semesters = classroom.semesters || [];
   const activeSemester = semesters.find(s => s.is_active);
 
+  const modalSelectStyle = {
+    width: '100%', padding: '12px 15px', border: '1.5px solid var(--border-color)',
+    borderRadius: '6px', fontSize: '15px', fontFamily: 'inherit',
+    background: 'var(--bg-color)', color: 'var(--text-primary)',
+  };
+
   return (
     <div className="classroom-container">
       {/* Header */}
-      <div className="classroom-header-section">
-        <div>
-          <button onClick={() => navigate('/classrooms')} style={{
-            background: 'none', border: 'none', color: '#667eea',
-            cursor: 'pointer', fontSize: '14px', marginBottom: '8px', padding: 0,
-          }}>
-            &larr; Back to Classrooms
-          </button>
-          <h1>{classroom.name}</h1>
-          {classroom.description && (
-            <p style={{ color: '#666', margin: '4px 0' }}>{classroom.description}</p>
-          )}
-        </div>
-        <div className="action-buttons">
+      <div style={{ marginBottom: '4px' }}>
+        <button onClick={() => navigate('/classrooms')} style={{
+          background: 'none', border: 'none', color: '#667eea',
+          cursor: 'pointer', fontSize: '13px', marginBottom: '10px', padding: 0,
+        }}>
+          &larr; Back to Classrooms
+        </button>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+          <div>
+            <h1 style={{ margin: 0 }}>{classroom.name}</h1>
+            {classroom.description && (
+              <p style={{ color: '#888', margin: '4px 0 0', fontSize: '14px' }}>{classroom.description}</p>
+            )}
+            <p style={{ color: '#aaa', margin: '4px 0 0', fontSize: '13px' }}>
+              {classroom.member_count || 0} members &nbsp;·&nbsp; {classroom.is_cr ? 'Class Representative' : 'Member'}
+            </p>
+          </div>
           {classroom.code && (
-            <span className="classroom-code" style={{ padding: '12px 24px', fontSize: '15px' }}>
+            <span className="classroom-code" style={{ fontSize: '13px', padding: '6px 14px', marginTop: '6px' }}>
               Code: {classroom.code}
             </span>
           )}
-          {classroom.is_cr && (
-            <button className="btn-primary" onClick={() => setShowCreateSemester(true)}>
-              New Semester
-            </button>
-          )}
-          <button onClick={() => { setShowLeaveModal(true); setLeaveError(''); }} style={{
-            background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca',
-            borderRadius: '8px', padding: '10px 20px', fontSize: '14px',
-            fontWeight: 600, cursor: 'pointer',
-          }}>
-            Leave
-          </button>
         </div>
       </div>
 
-      {/* Info bar */}
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '30px', padding: '15px 20px', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
-        <span style={{ color: '#555' }}><strong>Members:</strong> {classroom.member_count || 0}</span>
-        <span style={{ color: '#555' }}><strong>Role:</strong> {classroom.is_cr ? 'Class Representative' : 'Member'}</span>
+      {/* Sub-navbar */}
+      <div className="page-subnav">
+        {classroom.is_cr && (
+          <button className="page-subnav-item" onClick={() => setShowCreateSemester(true)}>
+            + New Semester
+          </button>
+        )}
+        {activeSemester?.is_user_cr && (
+          <>
+            <button className="page-subnav-item" onClick={() => { setShowAddCrModal(true); setAddCrTargetId(''); }}>
+              + Co-CR
+            </button>
+            <button className="page-subnav-item warning" onClick={() => { setShowTransferModal(true); setTransferNomineeId(''); }}>
+              Transfer CR
+            </button>
+            {activeSemester?.cr_ids?.length > 1 && (
+              <button className="page-subnav-item danger" onClick={() => { setShowQuitCrModal(true); setQuitCrError(''); }}>
+                Quit CR
+              </button>
+            )}
+          </>
+        )}
+        <div className="page-subnav-spacer" />
+        <button className="page-subnav-item danger" onClick={() => { setShowLeaveModal(true); setLeaveError(''); }}>
+          Leave
+        </button>
+        {classroom.is_cr && (
+          <button className="page-subnav-item danger" onClick={() => { setConfirmDelete(true); setDeleteConfirmName(''); }}>
+            Delete Classroom
+          </button>
+        )}
       </div>
 
       {error && <div className="error-message">{error}</div>}
       {success && <div className="success-message">{success}</div>}
+
+      {/* CR nomination banners */}
+      {pendingNominations.map(nom => (
+        <div key={nom.semester_id} style={{
+          background: '#fffbeb', border: '1.5px solid #fde68a', borderRadius: '10px',
+          padding: '14px 20px', marginBottom: '16px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+        }}>
+          <div>
+            <strong style={{ color: '#92400e', fontSize: '14px' }}>
+              {nom.nomination_type === 'add_co_cr' ? 'Co-CR invitation' : 'CR role transfer offered'}
+              {' '}<span style={{ fontWeight: 400, color: '#b45309' }}>· {nom.semester_name}</span>
+            </strong>
+            <p style={{ margin: '2px 0 0', color: '#b45309', fontSize: '13px' }}>
+              <strong>{nom.nominated_by}</strong>{' '}
+              {nom.nomination_type === 'add_co_cr'
+                ? 'wants to appoint you as a co-CR. You will both have CR access.'
+                : 'wants to transfer the CR role to you. They will lose CR access.'}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+            <button onClick={() => handleAcceptNomination(nom.semester_id)} style={{
+              background: '#667eea', color: 'white', border: 'none',
+              borderRadius: '6px', padding: '7px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+            }}>Accept</button>
+            <button onClick={() => handleDeclineNomination(nom.semester_id)} style={{
+              background: 'var(--card-bg)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)',
+              borderRadius: '6px', padding: '7px 14px', fontSize: '13px', fontWeight: 500, cursor: 'pointer',
+            }}>Decline</button>
+          </div>
+        </div>
+      ))}
+
+      {/* CR result notifications (accepted / declined / stepped down) */}
+      {crNotifications.map(note => (
+        <div key={note.id} style={{
+          background: note.type === 'cr_accepted' ? 'rgba(16,185,129,0.1)' : note.type === 'cr_stepped_down' ? '#fffbeb' : 'rgba(239,68,68,0.08)',
+          border: `1.5px solid ${note.type === 'cr_accepted' ? 'rgba(16,185,129,0.35)' : note.type === 'cr_stepped_down' ? '#fde68a' : 'rgba(239,68,68,0.35)'}`,
+          borderRadius: '10px', padding: '12px 18px', marginBottom: '12px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+        }}>
+          <p style={{ margin: 0, fontSize: '14px', color: 'var(--text-primary)' }}>
+            {note.type === 'cr_accepted'
+              ? <CheckCircle size={14} strokeWidth={1.75} style={{ color: '#10b981', marginRight: '4px', verticalAlign: 'middle' }} />
+              : note.type === 'cr_stepped_down'
+                ? <Bell size={14} strokeWidth={1.75} style={{ color: '#d97706', marginRight: '4px', verticalAlign: 'middle' }} />
+                : <XCircle size={14} strokeWidth={1.75} style={{ color: '#ef4444', marginRight: '4px', verticalAlign: 'middle' }} />}
+            {note.message}
+          </p>
+          <button onClick={() => setCrNotifications(prev => prev.filter(n => n.id !== note.id))} style={{
+            background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '16px', flexShrink: 0,
+          }}>&times;</button>
+        </div>
+      ))}
+
+      {/* Notifications / Activity Section — always visible */}
+      <div style={{
+        background: 'var(--card-bg)', border: '1.5px solid var(--border-color)',
+        borderRadius: '12px', padding: '18px 20px', marginBottom: '24px',
+      }}>
+        <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text-primary)', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Bell size={15} strokeWidth={1.75} /> Recent Activity
+        </div>
+
+        {!activity ? (
+          <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: 0 }}>Loading...</p>
+        ) : (activity.announcements.length === 0 && Object.keys(activity.unread_chat).length === 0 && !activity.pending_requests) ? (
+          <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: 0 }}>No recent activity.</p>
+        ) : (
+          <>
+            {/* Unread chat messages */}
+            {Object.keys(activity.unread_chat).length > 0 && (
+              <div style={{ marginBottom: '12px' }}>
+                {Object.entries(activity.unread_chat).map(([sid, info]) => (
+                  <div key={sid} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', background: 'rgba(102,126,234,0.08)', borderRadius: '8px', marginBottom: '4px', fontSize: '13px' }}>
+                    <MessageSquare size={14} strokeWidth={1.75} />
+                    <span style={{ color: 'var(--text-primary)', flex: 1 }}>
+                      <strong>{info.count}</strong> new message{info.count !== 1 ? 's' : ''} in <strong>{info.semester_name}</strong> chat
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Pending join requests */}
+            {activity.pending_requests > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', background: 'rgba(245,158,11,0.1)', borderRadius: '8px', marginBottom: '12px', fontSize: '13px' }}>
+                <Clock size={14} strokeWidth={1.75} style={{ color: '#f59e0b', flexShrink: 0 }} />
+                <span style={{ color: 'var(--text-primary)' }}>
+                  <strong>{activity.pending_requests}</strong> pending join request{activity.pending_requests !== 1 ? 's' : ''} awaiting approval
+                </span>
+              </div>
+            )}
+
+            {/* Recent announcements */}
+            {activity.announcements.length > 0 && (
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Announcements</div>
+                {activity.announcements.slice(0, 5).map(a => (
+                  <div key={a.id} style={{ padding: '8px 10px', background: 'var(--bg-color)', borderRadius: '8px', marginBottom: '4px', borderLeft: '3px solid #667eea' }}>
+                    <div style={{ fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.4 }}>{a.text}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '3px' }}>
+                      {a.created_by_name} · {a.semester_name} · {new Date(a.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       {/* Pending Join Requests (CR only) */}
       {classroom.is_cr && classroom.join_requests && classroom.join_requests.length > 0 && (
@@ -443,7 +712,7 @@ function ClassroomDetail({ user, onDmRead }) {
                   <p className="classroom-description">{member.email}</p>
                   {member.phone && (
                     <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
-                      📞 {member.phone}
+                      {member.phone}
                       {member.phone_public && (
                         <span style={{ marginLeft: '5px', fontSize: '10px', color: '#16a34a' }}>public</span>
                       )}
@@ -456,8 +725,8 @@ function ClassroomDetail({ user, onDmRead }) {
                         <button
                           onClick={() => setDmTarget({ id: member.id, name: member.fullName || member.username })}
                           style={{
-                            background: '#ede9fe', color: '#7c3aed', border: '1px solid #ddd6fe',
-                            borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 500,
+                            background: '#3b82f6', color: 'white', border: 'none',
+                            borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
                           }}
                         >
                           Message
@@ -466,27 +735,22 @@ function ClassroomDetail({ user, onDmRead }) {
                       {canKick && (
                         <>
                           <button onClick={() => handleRemoveMember(member.id)} style={{
-                            background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca',
-                            borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer',
+                            background: '#dc2626', color: 'white', border: 'none',
+                            borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
                           }}>Remove</button>
                           {member.profile_picture && (
                             <button onClick={() => { setRemovePhotoTarget({ id: member.id, name: member.fullName || member.username }); setRemovePhotoReason(''); }} style={{
-                              background: '#fff7ed', color: '#c2410c', border: '1px solid #fed7aa',
-                              borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer',
+                              background: '#dc2626', color: 'white', border: 'none',
+                              borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
                             }}>Remove Photo</button>
                           )}
                           <button onClick={() => { setFlagNameTarget({ id: member.id, name: member.fullName || member.username }); setFlagNameReason(''); }} style={{
-                            background: '#fdf4ff', color: '#7e22ce', border: '1px solid #e9d5ff',
-                            borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer',
+                            background: '#16a34a', color: 'white', border: 'none',
+                            borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
                           }}>Flag Name</button>
                         </>
                       )}
                     </div>
-                    {classroom.is_cr && memberMsgCount > 0 && (
-                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)', background: 'var(--bg-color)', padding: '2px 7px', borderRadius: '10px', border: '1px solid var(--border-color)', flexShrink: 0 }}>
-                        {memberMsgCount} msg{memberMsgCount !== 1 ? 's' : ''}
-                      </span>
-                    )}
                   </div>
                 </div>
               );
@@ -598,27 +862,108 @@ function ClassroomDetail({ user, onDmRead }) {
         </div>
       )}
 
-      {/* Danger zone: Delete Classroom (CR only) */}
-      {classroom.is_cr && (
-        <div style={{
-          marginTop: '40px', padding: '20px 24px',
-          border: '1.5px solid rgba(220,38,38,0.35)', borderRadius: '12px',
-          background: 'rgba(220,38,38,0.06)',
-        }}>
-          <h3 style={{ margin: '0 0 6px', fontSize: '16px', color: '#b91c1c' }}>Danger Zone</h3>
-          <p style={{ margin: '0 0 14px', fontSize: '13px', color: '#dc2626' }}>
-            Permanently delete this classroom and all its data. This cannot be undone.
-          </p>
-          <button
-            onClick={() => { setConfirmDelete(true); setDeleteConfirmName(''); }}
-            style={{
-              background: '#dc2626', color: 'white', border: 'none',
-              borderRadius: '8px', padding: '8px 20px', fontSize: '14px',
-              fontWeight: 600, cursor: 'pointer',
-            }}
-          >
-            Delete Classroom
-          </button>
+
+      {/* Add Co-CR Modal */}
+      {showAddCrModal && activeSemester && (
+        <div className="modal-overlay" onClick={() => setShowAddCrModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '420px' }}>
+            <h2>Add Co-CR</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '8px' }}>
+              Appoint another member as CR for <strong>{activeSemester.name}</strong>. They will have full CR access. <strong>You keep your own CR role.</strong>
+            </p>
+            <form onSubmit={handleAddCoCr}>
+              <div className="form-group">
+                <label>Select Member *</label>
+                <select
+                  value={addCrTargetId}
+                  onChange={e => setAddCrTargetId(e.target.value)}
+                  required
+                  disabled={addCrLoading}
+                  style={modalSelectStyle}
+                >
+                  <option value="">— select a member —</option>
+                  {(classroom?.members || [])
+                    .filter(m => !(activeSemester.cr_ids || []).includes(m.id))
+                    .map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.fullName || m.username} ({m.username})
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div className="modal-buttons">
+                <button type="button" onClick={() => setShowAddCrModal(false)} disabled={addCrLoading}>Cancel</button>
+                <button type="submit" disabled={addCrLoading || !addCrTargetId} style={{ background: '#667eea', color: 'white' }}>
+                  {addCrLoading ? 'Adding...' : 'Add as Co-CR'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Transfer CR Role Modal */}
+      {showTransferModal && activeSemester && (
+        <div className="modal-overlay" onClick={() => setShowTransferModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '420px' }}>
+            <h2>Transfer CR Role</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
+              Select a member to nominate for <strong>{activeSemester.name}</strong>. They must accept before the role transfers. You will lose CR access once they accept.
+            </p>
+            <form onSubmit={handleNominateCr}>
+              <div className="form-group">
+                <label>Nominate a Member *</label>
+                <select
+                  value={transferNomineeId}
+                  onChange={(e) => setTransferNomineeId(e.target.value)}
+                  required
+                  disabled={transferLoading}
+                  style={modalSelectStyle}
+                >
+                  <option value="">— select a member —</option>
+                  {(classroom?.members || [])
+                    .filter(m => !(activeSemester.cr_ids || []).includes(m.id))
+                    .map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.fullName || m.username} ({m.username})
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div className="modal-buttons">
+                <button type="button" onClick={() => setShowTransferModal(false)} disabled={transferLoading}>Cancel</button>
+                <button type="submit" disabled={transferLoading || !transferNomineeId} style={{ background: '#f59e0b', color: 'white' }}>
+                  {transferLoading ? 'Sending...' : 'Send Nomination'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Quit CR Modal */}
+      {showQuitCrModal && (
+        <div className="modal-overlay" onClick={() => setShowQuitCrModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px', textAlign: 'center' }}>
+            <h2 style={{ margin: '0 0 10px' }}>Step down as CR?</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', margin: '0 0 20px' }}>
+              You will remain in <strong>{classroom.name}</strong> but lose your CR privileges for the active semester.
+            </p>
+            {quitCrError && (
+              <div style={{
+                background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px',
+                padding: '10px 14px', color: '#b91c1c', fontSize: '13px', marginBottom: '14px',
+              }}>
+                {quitCrError}
+              </div>
+            )}
+            <div className="modal-buttons" style={{ justifyContent: 'center' }}>
+              <button type="button" onClick={() => setShowQuitCrModal(false)} disabled={quitCrLoading}>Cancel</button>
+              <button type="button" onClick={handleQuitCr} disabled={quitCrLoading} style={{ background: '#dc2626', color: 'white' }}>
+                {quitCrLoading ? 'Stepping down...' : 'Step Down'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -630,15 +975,12 @@ function ClassroomDetail({ user, onDmRead }) {
             <p style={{ color: 'var(--text-secondary)', fontSize: '14px', margin: '0 0 12px' }}>
               You will lose access to <strong>{classroom.name}</strong> and will need the invite code to rejoin.
             </p>
-            {classroom.is_cr && !leaveError && (
+            {activeSemester?.is_user_cr && activeSemester?.cr_ids?.length === 1 && !leaveError && (
               <div style={{
                 background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px',
                 padding: '10px 14px', marginBottom: '14px', fontSize: '13px', color: '#92400e',
               }}>
-                You are a CR in this classroom. Leaving will remove your CR role from all semesters.<br />
-                <span style={{ fontSize: '12px', opacity: 0.85 }}>
-                  (Only allowed if another CR exists in each semester you are CR of.)
-                </span>
+                You are the only CR in the active semester. You must transfer your CR role before leaving.
               </div>
             )}
             {leaveError && (
@@ -721,7 +1063,7 @@ function ClassroomDetail({ user, onDmRead }) {
           onFilePick={() => dmFileInputRef.current?.click()}
           onClearFile={() => setPendingDmFile(null)}
           onSend={sendDmMessage}
-          onDelete={deleteDmMessage}
+          onDelete={(msgId, mode) => deleteDmMessage(msgId, mode)}
           sending={dmSending}
           uploading={dmUploading}
           bottomRef={dmBottomRef}
@@ -803,18 +1145,25 @@ function sizeLabel(bytes) {
 }
 
 function dmFileIcon(mime) {
-  if (!mime) return '📎';
-  if (mime.startsWith('image/')) return '🖼️';
-  if (mime.startsWith('video/')) return '🎬';
-  if (mime.startsWith('audio/')) return '🎵';
-  if (mime === 'application/pdf') return '📄';
-  return '📎';
+  return <FileTypeIcon mime={mime} size={18} />;
 }
 
 function DMModal({ target, messages, loading, error, text, onTextChange, pendingFile, onFilePick, onClearFile, onSend, onDelete, sending, uploading, bottomRef, userId, onClose, onOpenFilePicker }) {
+  const [dmDeleteMenu, setDmDeleteMenu] = React.useState(null); // { msgId, x, y }
+
+  React.useEffect(() => {
+    if (!dmDeleteMenu) return;
+    const handler = () => setDmDeleteMenu(null);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [dmDeleteMenu]);
+
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); }
   };
+
+  // Find the last message sent by me to show read receipt
+  const lastMyMsgIdx = messages.reduce((last, m, i) => m.sender_id === userId ? i : last, -1);
 
   return (
     <div
@@ -859,10 +1208,13 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
               No messages yet. Say hello!
             </div>
           )}
-          {messages.map(msg => {
+          {messages.map((msg, idx) => {
             const isMe = msg.sender_id === userId;
-            const hasFile = !!msg.file;
+            const isDeleted = msg.deleted_for_everyone;
+            const hasFile = !!msg.file && !isDeleted;
             const fileUrl = hasFile ? dmAPI.getDmFileUrl(msg.id) : null;
+            const isRead = isMe && msg.read_by?.includes(target.id);
+            const isLastMine = isMe && idx === lastMyMsgIdx;
             return (
               <div key={msg.id} style={{ display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: '6px' }}>
                 {!isMe && (
@@ -883,34 +1235,82 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
                     padding: '9px 13px', fontSize: '14px', wordBreak: 'break-word',
                     border: isMe ? 'none' : '1px solid var(--border-color)',
                     position: 'relative',
+                    opacity: isDeleted ? 0.7 : 1,
                   }}>
-                    {hasFile && (
-                      <a href={fileUrl} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isMe ? 'rgba(255,255,255,0.9)' : '#667eea', textDecoration: 'none', marginBottom: msg.text ? '6px' : 0 }}>
-                        <span style={{ fontSize: '18px' }}>{dmFileIcon(msg.file.mime_type)}</span>
-                        <span style={{ fontSize: '13px', fontWeight: 500 }}>{msg.file.name}</span>
-                        <span style={{ fontSize: '11px', opacity: 0.75 }}>{sizeLabel(msg.file.size)}</span>
-                      </a>
-                    )}
-                    {msg.text && <span>{msg.text}</span>}
-                    {isMe && (
-                      <button
-                        onClick={() => onDelete(msg.id)}
-                        style={{
-                          background: 'none', border: 'none', cursor: 'pointer',
-                          color: 'rgba(255,255,255,0.6)', fontSize: '11px', padding: '0 0 0 8px',
-                          verticalAlign: 'middle',
-                        }}
-                        title="Delete"
-                      >✕</button>
+                    {isDeleted ? (
+                      <span style={{ color: isMe ? 'rgba(255,255,255,0.55)' : '#9ca3af', fontStyle: 'italic', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <EyeOff size={13} strokeWidth={1.75} /> This message was deleted
+                      </span>
+                    ) : (
+                      <>
+                        {hasFile && (
+                          <a href={fileUrl} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isMe ? 'rgba(255,255,255,0.9)' : '#667eea', textDecoration: 'none', marginBottom: msg.text ? '6px' : 0 }}>
+                            {dmFileIcon(msg.file.mime_type)}
+                            <span style={{ fontSize: '13px', fontWeight: 500 }}>{msg.file.name}</span>
+                            <span style={{ fontSize: '11px', opacity: 0.75 }}>{sizeLabel(msg.file.size)}</span>
+                          </a>
+                        )}
+                        {msg.text && <span>{msg.text}</span>}
+                        {isMe && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setDmDeleteMenu({ msgId: msg.id, x: e.clientX, y: e.clientY }); }}
+                            onMouseDown={e => e.stopPropagation()}
+                            style={{
+                              background: 'none', border: 'none', cursor: 'pointer',
+                              color: 'rgba(255,255,255,0.5)', fontSize: '11px', padding: '0 0 0 8px',
+                              verticalAlign: 'middle',
+                            }}
+                            title="Delete options"
+                          >⋯</button>
+                        )}
+                      </>
                     )}
                   </div>
-                  <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px', paddingLeft: '4px', textAlign: isMe ? 'right' : 'left' }}>
-                    {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px', paddingLeft: '4px', textAlign: isMe ? 'right' : 'left', display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', alignItems: 'center', gap: '4px' }}>
+                    <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    {isLastMine && isRead && (
+                      <span style={{ color: '#667eea', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '2px' }}><Check size={11} strokeWidth={2} /> Seen</span>
+                    )}
                   </div>
                 </div>
               </div>
             );
           })}
+          {/* DM delete context menu */}
+          {dmDeleteMenu && (
+            <div
+              onMouseDown={e => e.stopPropagation()}
+              style={{
+                position: 'fixed',
+                top: Math.min(dmDeleteMenu.y, window.innerHeight - 100),
+                left: Math.min(dmDeleteMenu.x, window.innerWidth - 180),
+                background: 'var(--card-bg)', borderRadius: '10px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.2)', border: '1px solid var(--border-color)',
+                zIndex: 800, overflow: 'hidden', minWidth: '160px',
+              }}
+            >
+              {[
+                { label: 'Delete for me', icon: <Eye size={14} strokeWidth={1.75} />, mode: 'for_me' },
+                { label: 'Delete for everyone', icon: <Trash2 size={14} strokeWidth={1.75} />, mode: 'for_everyone' },
+              ].map(({ label, icon, mode }) => (
+                <button
+                  key={mode}
+                  onMouseDown={() => { onDelete(dmDeleteMenu.msgId, mode); setDmDeleteMenu(null); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    width: '100%', padding: '11px 16px', background: 'none',
+                    border: 'none', cursor: 'pointer', fontSize: '13px',
+                    color: mode === 'for_everyone' ? '#dc2626' : 'var(--text-primary)',
+                    textAlign: 'left', fontWeight: 500,
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-color)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                >
+                  <span>{icon}</span><span>{label}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
 
@@ -927,14 +1327,14 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
             padding: '8px 20px', background: 'var(--bg-color)', borderTop: '1px solid var(--border-color)',
             display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0,
           }}>
-            <span style={{ fontSize: '18px' }}>📎</span>
+            <Paperclip size={18} strokeWidth={1.75} style={{ flexShrink: 0, color: 'var(--text-secondary)' }} />
             <span style={{ flex: 1, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)' }}>
               {pendingFile.name}
             </span>
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)', flexShrink: 0 }}>
               {sizeLabel(pendingFile.size)}
             </span>
-            <button onClick={onClearFile} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '16px', padding: '0 2px' }}>✕</button>
+            <button onClick={onClearFile} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '16px', padding: '0 2px', display: 'flex', alignItems: 'center' }}><X size={16} strokeWidth={1.75} /></button>
           </div>
         )}
 
@@ -952,7 +1352,7 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
               padding: '8px 10px', cursor: pendingFile ? 'not-allowed' : 'pointer',
               fontSize: '16px', color: pendingFile ? 'var(--text-secondary)' : '#667eea', flexShrink: 0,
             }}
-          >📎</button>
+          ><Paperclip size={16} strokeWidth={1.75} /></button>
           <button
             onClick={onOpenFilePicker}
             disabled={!!pendingFile}

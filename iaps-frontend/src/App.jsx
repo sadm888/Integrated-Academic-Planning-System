@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { AlertTriangle, Tag, Image as ImageIcon, MessageSquare } from 'lucide-react';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Classrooms from './pages/Classrooms';
@@ -184,7 +185,7 @@ function App() {
           maxWidth: '420px', width: '90%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
           textAlign: 'center',
         }}>
-          <div style={{ fontSize: '40px', marginBottom: '12px' }}>⚠️</div>
+          <div style={{ fontSize: '40px', marginBottom: '12px', display: 'flex', justifyContent: 'center' }}><AlertTriangle size={40} strokeWidth={1.75} color="#f59e0b" /></div>
           <h2 style={{ margin: '0 0 8px', color: '#1f2937', fontSize: '18px' }}>
             Your profile photo was removed
           </h2>
@@ -249,7 +250,7 @@ function App() {
           maxWidth: '420px', width: '90%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
           textAlign: 'center', border: '2px solid #a855f7',
         }}>
-          <div style={{ fontSize: '40px', marginBottom: '12px' }}>🏷️</div>
+          <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'center' }}><Tag size={40} color="#a855f7" strokeWidth={1.5} /></div>
           <h2 style={{ margin: '0 0 8px', color: 'var(--text-primary, #1f2937)', fontSize: '18px' }}>
             Your display name has been flagged
           </h2>
@@ -282,7 +283,7 @@ function App() {
     {pendingWarnings.length > 0 && !photoNotice && (() => {
       const w = pendingWarnings[0];
       const typeLabel = w.warn_type === 'name' ? 'Display Name' : w.warn_type === 'picture' ? 'Profile Picture' : 'Chat Message';
-      const typeIcon = w.warn_type === 'name' ? '🏷️' : w.warn_type === 'picture' ? '🖼️' : '💬';
+      const typeIcon = w.warn_type === 'name' ? <Tag size={16} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} /> : w.warn_type === 'picture' ? <ImageIcon size={16} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} /> : <MessageSquare size={16} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />;
       return (
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
@@ -293,7 +294,7 @@ function App() {
             maxWidth: '440px', width: '90%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
             textAlign: 'center', border: '2px solid #fbbf24',
           }}>
-            <div style={{ fontSize: '40px', marginBottom: '8px' }}>⚠️</div>
+            <div style={{ fontSize: '40px', marginBottom: '8px', display: 'flex', justifyContent: 'center' }}><AlertTriangle size={40} strokeWidth={1.75} color="#f59e0b" /></div>
             <h2 style={{ margin: '0 0 4px', color: 'var(--text-primary, #1f2937)', fontSize: '18px' }}>
               Warning — {typeIcon} {typeLabel}
             </h2>

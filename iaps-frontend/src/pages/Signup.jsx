@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { authAPI } from '../services/api';
 import '../styles/Auth.css';
+import { Eye } from 'lucide-react';
 
 const Signup = ({ onAuthSuccess }) => {
   const navigate = useNavigate();
@@ -203,7 +204,7 @@ const Signup = ({ onAuthSuccess }) => {
                   tabIndex={-1}
                   title="Hold to show password"
                   style={eyeBtnStyle}
-                >👁</button>
+                ><Eye size={13} strokeWidth={1.75} /></button>
               </div>
               <small className="hint">
                 8+ chars, uppercase, lowercase, number
@@ -230,7 +231,7 @@ const Signup = ({ onAuthSuccess }) => {
                   tabIndex={-1}
                   title="Hold to show password"
                   style={eyeBtnStyle}
-                >👁</button>
+                ><Eye size={13} strokeWidth={1.75} /></button>
               </div>
             </div>
           </div>

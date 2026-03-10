@@ -51,7 +51,7 @@ def list_announcements(semester_id):
                 'text': doc['text'],
                 'created_by': doc.get('created_by'),
                 'created_by_name': doc.get('created_by_name', 'CR'),
-                'created_at': doc['created_at'].isoformat(),
+                'created_at': doc['created_at'].isoformat() + 'Z',
             })
 
         return jsonify({'announcements': result}), 200
@@ -99,7 +99,7 @@ def create_announcement(semester_id):
                 'text': text,
                 'created_by': user_id,
                 'created_by_name': creator_name,
-                'created_at': doc['created_at'].isoformat(),
+                'created_at': doc['created_at'].isoformat() + 'Z',
             }
         }), 201
     except Exception as e:

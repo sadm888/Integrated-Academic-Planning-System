@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { CalendarDays } from 'lucide-react';
 import { calendarAPI, scheduleAPI, classroomAPI } from '../services/api';
 import '../styles/Classroom.css';
 
@@ -385,7 +386,7 @@ function Calendar({ user }) {
           display: 'flex', flexDirection: 'column', alignItems: 'center',
           justifyContent: 'center', padding: '80px 20px', textAlign: 'center'
         }}>
-          <div style={{ fontSize: '72px', marginBottom: '20px' }}>&#128197;</div>
+          <div style={{ marginBottom: '20px' }}><CalendarDays size={72} strokeWidth={1.25} color="#667eea" /></div>
           <h2 style={{ fontSize: '26px', color: '#333', marginBottom: '12px' }}>My Calendar</h2>
           <p style={{ color: '#666', maxWidth: '420px', marginBottom: '32px', lineHeight: 1.7 }}>
             Connect your Google Calendar to view your schedule, add personal events,
@@ -761,7 +762,7 @@ function Calendar({ user }) {
                     type="button"
                     onClick={handleDeleteEvent}
                     disabled={editLoading}
-                    style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca' }}
+                    style={{ background: '#dc2626', color: 'white', border: 'none' }}
                   >
                     {editLoading ? '...' : 'Delete'}
                   </button>

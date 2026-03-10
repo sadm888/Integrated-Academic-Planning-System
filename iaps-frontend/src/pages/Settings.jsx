@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { settingsAPI, calendarAPI, BACKEND_URL } from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
 import Avatar from '../components/Avatar';
+import { FileTypeIcon } from '../utils/fileUtils';
+import { AlertTriangle, Pencil, Eye, Trash2, Calendar, CheckCircle } from 'lucide-react';
 
 const SECTIONS = ['Profile', 'Security', 'Appearance', 'Personal Documents', 'Connected Services'];
 
@@ -14,14 +16,6 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function fileIcon(mimeType) {
-  if (!mimeType) return '📄';
-  if (mimeType.startsWith('image/')) return '🖼️';
-  if (mimeType.startsWith('video/')) return '🎬';
-  if (mimeType.startsWith('audio/')) return '🎵';
-  if (mimeType === 'application/pdf') return '📕';
-  return '📄';
-}
 
 // Compress an image file using Canvas before uploading (#11)
 function compressImage(file, maxDim = 800, quality = 0.85) {
@@ -120,7 +114,7 @@ function ProfileSection({ user, onProfileUpdate }) {
           padding: '12px 16px', marginBottom: '20px',
           display: 'flex', gap: '12px', alignItems: 'flex-start',
         }}>
-          <span style={{ fontSize: '20px', flexShrink: 0 }}>⚠️</span>
+          <AlertTriangle size={20} strokeWidth={1.75} style={{ flexShrink: 0, color: '#c2410c' }} />
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 600, color: '#c2410c', fontSize: '14px' }}>Your profile photo was removed</div>
             <div style={{ color: '#9a3412', fontSize: '13px', marginTop: '2px' }}>
@@ -157,7 +151,7 @@ function ProfileSection({ user, onProfileUpdate }) {
             background: '#667eea', borderRadius: '50%', width: '22px', height: '22px',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: '12px', color: 'white', border: '2px solid var(--card-bg)',
-          }}>✏️</div>
+          }}><Pencil size={12} strokeWidth={1.75} /></div>
         </div>
         <div>
           <div style={{ fontWeight: 600, fontSize: '16px', color: 'var(--text-primary)' }}>{user.username}</div>
@@ -270,7 +264,7 @@ function PwInput({ value, onChange, placeholder = '', required = false, disabled
           userSelect: 'none',
         }}
       >
-        👁
+        <Eye size={13} strokeWidth={1.75} />
       </button>
     </div>
   );
@@ -502,7 +496,7 @@ function AppearanceSection() {
                 transition: 'all 0.15s',
               }}
             >
-              {t === 'light' ? '☀️ Light' : '🌙 Dark'}
+              {t === 'light' ? 'Light' : 'Dark'}
             </button>
           ))}
         </div>
@@ -576,7 +570,7 @@ function StorageSection() {
                   borderBottom: '1px solid var(--border-color)',
                 }}
               >
-                <span style={{ fontSize: '22px' }}>{fileIcon(f.mime_type)}</span>
+                <FileTypeIcon mime={f.mime_type} size={22} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 500, fontSize: '14px', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {f.filename}
@@ -590,7 +584,7 @@ function StorageSection() {
                   style={{ ...ghostBtnStyle, color: '#ef4444', borderColor: '#ef4444', padding: '4px 10px', fontSize: '13px' }}
                   title="Delete file"
                 >
-                  🗑 Delete
+                  <Trash2 size={14} strokeWidth={1.75} style={{ marginRight: '4px' }} /> Delete
                 </button>
               </div>
             ))}
@@ -649,13 +643,7 @@ function PersonalDocumentsSection() {
     } catch { setErr('Failed to delete'); }
   };
 
-  const mimeIcon = (mime = '') => {
-    if (mime.startsWith('image/')) return '🖼️';
-    if (mime === 'application/pdf') return '📄';
-    if (mime.includes('word')) return '📝';
-    if (mime.includes('sheet') || mime.includes('excel')) return '📊';
-    return '📎';
-  };
+  const mimeIcon = (mime = '') => <FileTypeIcon mime={mime} size={22} />;
 
   return (
     <div>
@@ -733,7 +721,7 @@ function PersonalDocumentsSection() {
                 display: 'flex', alignItems: 'center', gap: '12px',
                 padding: '10px 0', borderBottom: '1px solid var(--border-color)',
               }}>
-                <span style={{ fontSize: '22px' }}>{mimeIcon(doc.mime_type)}</span>
+                {mimeIcon(doc.mime_type)}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {doc.label}
@@ -813,12 +801,12 @@ function ConnectedServicesSection() {
             background: 'rgba(102,126,234,0.1)', display: 'flex', alignItems: 'center',
             justifyContent: 'center', fontSize: '24px', flexShrink: 0,
           }}>
-            📅
+            <Calendar size={24} strokeWidth={1.75} style={{ color: '#667eea' }} />
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Google Calendar</div>
             <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-              {loading ? 'Checking status…' : isConnected ? '✅ Connected' : 'Not connected'}
+              {loading ? 'Checking status…' : isConnected ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><CheckCircle size={13} strokeWidth={1.75} color="#22c55e" /> Connected</span> : 'Not connected'}
             </div>
           </div>
           {!loading && (

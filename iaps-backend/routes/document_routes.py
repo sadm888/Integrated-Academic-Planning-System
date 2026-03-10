@@ -125,7 +125,7 @@ def list_documents(semester_id):
         if not classroom or not is_member_of_classroom(classroom, user_id):
             return jsonify({'error': 'Access denied'}), 403
 
-        query = {'semester_id': semester_id}
+        query = {'semester_id': semester_id, 'uploaded_by': user_id}
         doc_type = request.args.get('type')
         course_id = request.args.get('courseId')
         if doc_type:
@@ -188,6 +188,8 @@ def download_document(document_id):
         classroom = db.classrooms.find_one({'_id': ObjectId(semester['classroom_id'])}) if semester else None
         if not classroom or not is_member_of_classroom(classroom, user_id):
             return jsonify({'error': 'Access denied'}), 403
+        if doc.get('uploaded_by') != user_id:
+            return jsonify({'error': 'Access denied'}), 403
         file_path = doc.get('file_path', '')
         if not os.path.exists(file_path):
             return jsonify({'error': 'File not found on disk'}), 404
@@ -202,7 +204,7 @@ def download_document(document_id):
 @cross_origin()
 @token_required
 def delete_document(document_id):
-    """Delete document (owner or CR only)"""
+    """Delete document (owner only)"""
     from database import get_db
 
     try:
@@ -213,13 +215,7 @@ def delete_document(document_id):
         if not document:
             return jsonify({'error': 'Document not found'}), 404
 
-        is_owner = document['uploaded_by'] == user_id
-
-        # Check if CR of the semester
-        semester = db.semesters.find_one({'_id': ObjectId(document['semester_id'])})
-        is_cr = semester and is_cr_of(semester, user_id)
-
-        if not (is_owner or is_cr):
+        if document['uploaded_by'] != user_id:
             return jsonify({'error': 'Permission denied'}), 403
 
         if os.path.exists(document.get('file_path', '')):

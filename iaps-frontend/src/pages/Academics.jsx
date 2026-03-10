@@ -1,33 +1,24 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { semesterAPI, academicAPI, todoAPI } from '../services/api';
+import { semesterAPI, academicAPI, todoAPI, subjectAPI } from '../services/api';
+import { useSocket } from '../hooks/useSocket';
 import FilePickerModal from '../components/FilePickerModal';
+import { sizeLabel, FileTypeIcon } from '../utils/fileUtils';
+import {
+  Calendar, ClipboardList, GraduationCap, BookMarked, Folder,
+  Lock, Unlock, Eye, EyeOff, MessageSquare, Check,
+} from 'lucide-react';
 
-function sizeLabel(bytes) {
-  if (!bytes) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function fileIcon(mime) {
-  if (!mime) return '📎';
-  if (mime.startsWith('image/')) return '🖼️';
-  if (mime.startsWith('video/')) return '🎬';
-  if (mime.startsWith('audio/')) return '🎵';
-  if (mime === 'application/pdf') return '📄';
-  return '📎';
-}
-
-const SECTION_ICONS = {
-  schedule: '🗓️',
-  course_plan: '📋',
-  pyq: '📝',
-  books: '📚',
+const SECTION_ICON_MAP = {
+  schedule: Calendar,
+  course_plan: ClipboardList,
+  pyq: GraduationCap,
+  books: BookMarked,
 };
 
-function sectionIcon(id) {
-  return SECTION_ICONS[id] || '📁';
+function SectionIcon({ id, size = 14 }) {
+  const Icon = SECTION_ICON_MAP[id] || Folder;
+  return <Icon size={size} strokeWidth={1.75} style={{ flexShrink: 0, color: 'var(--text-secondary)' }} />;
 }
 
 // ── File row ────────────────────────────────────────────────────────────────
@@ -54,7 +45,7 @@ function FileRow({ resource, onDelete, onDragStart, canDelete, isCr, semesterId,
       onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}
     >
       <span style={{ color: 'var(--text-secondary)', opacity: 0.35, fontSize: '13px', flexShrink: 0, userSelect: 'none', letterSpacing: '-1px' }} title="Drag to move between folders">⠿⠿</span>
-      <span style={{ fontSize: '18px', flexShrink: 0 }}>{fileIcon(resource.mime_type)}</span>
+      <FileTypeIcon mime={resource.mime_type} size={18} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <a
           href={url}
@@ -76,8 +67,8 @@ function FileRow({ resource, onDelete, onDragStart, canDelete, isCr, semesterId,
             <span style={{ color: '#667eea', fontWeight: 600 }}>from chat</span>
           )}
           {folderName && (
-            <span style={{ padding: '1px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 600, background: 'rgba(102,126,234,0.12)', color: '#667eea', border: '1px solid rgba(102,126,234,0.2)' }}>
-              📁 {folderName}
+            <span style={{ padding: '1px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 600, background: 'rgba(102,126,234,0.12)', color: '#667eea', border: '1px solid rgba(102,126,234,0.2)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+              <Folder size={9} strokeWidth={2} />{folderName}
             </span>
           )}
           {/* Visibility badge for PYQ/Books */}
@@ -92,21 +83,32 @@ function FileRow({ resource, onDelete, onDragStart, canDelete, isCr, semesterId,
           )}
         </div>
       </div>
-      {/* CR toggle public/private on PYQ/Books */}
+      {/* CR toggle public/private on PYQ/Books — toggle switch */}
       {isCr && isPyqOrBooks && onTogglePublic && (
         <button
           onClick={() => onTogglePublic(resource.id)}
-          title={isPublic ? 'Make private (hide from members)' : 'Make public (visible to all)'}
+          title={isPublic ? 'Make private' : 'Make public'}
           style={{
-            background: 'none', border: '1px solid var(--border-color)', cursor: 'pointer',
-            borderRadius: '4px', fontSize: '11px', fontWeight: 600,
-            color: isPublic ? '#059669' : 'var(--text-secondary)',
-            padding: '2px 7px', flexShrink: 0,
+            display: 'inline-flex', alignItems: 'center', gap: '5px',
+            background: 'none', border: 'none', cursor: 'pointer',
+            padding: '2px 4px', flexShrink: 0,
           }}
-          onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-color)'}
-          onMouseLeave={e => e.currentTarget.style.background = 'none'}
         >
-          {isPublic ? '🌐' : '🔒'}
+          <span style={{
+            display: 'inline-flex', alignItems: 'center',
+            width: '28px', height: '16px', borderRadius: '8px',
+            background: isPublic ? '#059669' : '#d1d5db',
+            position: 'relative', transition: 'background 0.2s', flexShrink: 0,
+          }}>
+            <span style={{
+              position: 'absolute', left: isPublic ? '14px' : '2px',
+              width: '12px', height: '12px', borderRadius: '50%',
+              background: 'white', transition: 'left 0.2s',
+            }} />
+          </span>
+          <span style={{ fontSize: '10px', fontWeight: 600, color: isPublic ? '#059669' : 'var(--text-secondary)' }}>
+            {isPublic ? 'Public' : 'Private'}
+          </span>
         </button>
       )}
       {canHide && (
@@ -141,7 +143,6 @@ function FileRow({ resource, onDelete, onDragStart, canDelete, isCr, semesterId,
 
 function SectionPanel({ section, files, semesterId, subjectId, onDelete, onDrop, uploading, uploadProgress, onUpload, isCr, userId, onTogglePublic, onHide, folders }) {
   const [dragOver, setDragOver] = useState(false);
-  const [uploadPublic, setUploadPublic] = useState(true); // public/private toggle for CR on pyq/books
   const [pendingFile, setPendingFile] = useState(null); // staged file waiting for confirm
   const [showFilePicker, setShowFilePicker] = useState(false);
   const inputRef = useRef(null);
@@ -149,12 +150,12 @@ function SectionPanel({ section, files, semesterId, subjectId, onDelete, onDrop,
   const isPyqOrBooks = section.id === 'pyq' || section.id === 'books';
 
   const cancelPending = () => { setPendingFile(null); if (inputRef.current) inputRef.current.value = ''; };
-  const confirmUpload = () => { if (pendingFile) { onUpload(pendingFile, uploadPublic); setPendingFile(null); if (inputRef.current) inputRef.current.value = ''; } };
+  const confirmUpload = () => { if (pendingFile) { onUpload(pendingFile, true); setPendingFile(null); if (inputRef.current) inputRef.current.value = ''; } };
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: uploading ? '6px' : '10px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '18px' }}>{sectionIcon(section.id)}</span>
+        <SectionIcon id={section.id} size={16} />
         <span style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text-primary)' }}>{section.name}</span>
         {section.cr_only && (
           <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 7px', borderRadius: '999px', background: '#fef3c7', color: '#92400e' }}>
@@ -172,23 +173,6 @@ function SectionPanel({ section, files, semesterId, subjectId, onDelete, onDrop,
               style={{ display: 'none' }}
               onChange={e => { if (e.target.files[0]) setPendingFile(e.target.files[0]); }}
             />
-            {/* Public/private toggle for CR uploading to PYQ/Books */}
-            {isCr && isPyqOrBooks && (
-              <button
-                type="button"
-                onClick={() => setUploadPublic(v => !v)}
-                title={uploadPublic ? 'Will upload as Public (visible to all). Click to make Private.' : 'Will upload as Private (only you see it). Click to make Public.'}
-                style={{
-                  background: uploadPublic ? 'rgba(16,185,129,0.1)' : 'rgba(156,163,175,0.12)',
-                  color: uploadPublic ? '#059669' : 'var(--text-secondary)',
-                  border: `1px solid ${uploadPublic ? 'rgba(16,185,129,0.4)' : 'var(--border-color)'}`,
-                  borderRadius: '6px', padding: '4px 8px', fontSize: '12px',
-                  fontWeight: 600, cursor: 'pointer',
-                }}
-              >
-                {uploadPublic ? '🌐 Public' : '🔒 Private'}
-              </button>
-            )}
             <button
               onClick={() => inputRef.current?.click()}
               disabled={uploading || !!pendingFile}
@@ -212,7 +196,7 @@ function SectionPanel({ section, files, semesterId, subjectId, onDelete, onDrop,
                 opacity: (uploading || pendingFile) ? 0.5 : 1,
               }}
             >
-              📁 Files
+              Files
             </button>
             {showFilePicker && (
               <FilePickerModal
@@ -233,7 +217,7 @@ function SectionPanel({ section, files, semesterId, subjectId, onDelete, onDrop,
           background: 'rgba(102,126,234,0.06)', border: '1.5px solid rgba(102,126,234,0.25)',
           flexWrap: 'wrap',
         }}>
-          <span style={{ fontSize: '16px', flexShrink: 0 }}>{fileIcon(pendingFile.type)}</span>
+          <FileTypeIcon mime={pendingFile.type} size={16} />
           <span style={{ flex: 1, fontSize: '13px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
             {pendingFile.name}
           </span>
@@ -354,10 +338,31 @@ function Academics({ user }) {
   const [folderLoading, setFolderLoading] = useState(false);
   const [dragOverFolderId, setDragOverFolderId] = useState(undefined); // undefined = none, null = 'All' tab
 
+  // Subject management (CR only)
+  const [showAddSubject, setShowAddSubject] = useState(false);
+  const [newSubjectName, setNewSubjectName] = useState('');
+  const [newSubjectCode, setNewSubjectCode] = useState('');
+  const [subjectLoading, setSubjectLoading] = useState(false);
+
   // Subject todos
   const [todos, setTodos] = useState([]);
   const [newTodoText, setNewTodoText] = useState('');
   const [todoLoading, setTodoLoading] = useState(false);
+
+  // Remove chat-linked resources when the underlying message is deleted/tombstoned
+  const handleChatDeleted = useCallback(({ message_id }) => {
+    if (!message_id) return;
+    setResources(prev => prev.filter(r => !(r.source === 'chat' && r.chat_message_id === message_id)));
+    setChatFiles(prev => prev.filter(f => f.message_id !== message_id));
+  }, []);
+
+  useSocket(semesterId, {
+    onDeleted: handleChatDeleted,
+    onTombstoned: handleChatDeleted,
+  });
+
+  const reloadSemester = () =>
+    semesterAPI.getDetail(semesterId).then(res => setSemester(res.data.semester));
 
   useEffect(() => {
     semesterAPI.getDetail(semesterId)
@@ -441,6 +446,31 @@ function Academics({ user }) {
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create folder');
     } finally { setFolderLoading(false); }
+  };
+
+  const handleAddSubject = async (e) => {
+    e.preventDefault();
+    if (!newSubjectName.trim()) return;
+    setSubjectLoading(true);
+    setError('');
+    try {
+      await subjectAPI.create({ semester_id: semesterId, classroom_id: classroomId, name: newSubjectName.trim(), code: newSubjectCode.trim() || undefined });
+      setNewSubjectName(''); setNewSubjectCode(''); setShowAddSubject(false);
+      await reloadSemester();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to add subject');
+    } finally { setSubjectLoading(false); }
+  };
+
+  const handleDeleteSubject = async (subjectId, subjectName) => {
+    if (!window.confirm(`Delete "${subjectName}" and all its files? This cannot be undone.`)) return;
+    try {
+      await subjectAPI.delete(subjectId);
+      backToSubjects();
+      await reloadSemester();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete subject');
+    }
   };
 
   const handleDeleteFolder = async (folderId) => {
@@ -623,10 +653,37 @@ function Academics({ user }) {
       setSections(prev => prev.map(s =>
         s.id === sectionId ? { ...s, hidden: isNowHidden } : s
       ));
-      // If the toggled section was active and is now hidden, clear selection
       if (activeSectionId === sectionId && isNowHidden) setActiveSectionId(null);
     } catch (e) {
       setError(e.response?.data?.error || 'Failed to toggle section');
+    }
+  };
+
+  // Per-user non-destructive hide/show for PYQ/Books (any member)
+  const handleUserHideSection = async (sectionId) => {
+    if (!activeSubjectId) return;
+    try {
+      const res = await academicAPI.userHideSection(semesterId, activeSubjectId, sectionId);
+      const isNowHidden = res.data.user_hidden;
+      setSections(prev => prev.map(s =>
+        s.id === sectionId ? { ...s, user_hidden: isNowHidden } : s
+      ));
+      if (activeSectionId === sectionId && isNowHidden) setActiveSectionId(null);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to toggle section visibility');
+    }
+  };
+
+  // Toggle is_private on own custom section
+  const handleLockSection = async (sectionId) => {
+    if (!activeSubjectId) return;
+    try {
+      const res = await academicAPI.lockSection(semesterId, activeSubjectId, sectionId);
+      setSections(prev => prev.map(s =>
+        s.id === sectionId ? { ...s, is_private: res.data.is_private } : s
+      ));
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to lock section');
     }
   };
 
@@ -680,38 +737,81 @@ function Academics({ user }) {
 
         {/* Subjects view */}
         {viewLevel === 'subjects' && (
-          <div style={{ padding: '0 8px', flex: 1 }}>
-            {subjects.length === 0 ? (
-              <div style={{ padding: '12px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                No subjects yet. Add subjects from the semester page.
-              </div>
-            ) : (
-              subjects.map(sub => (
-                <button
-                  key={sub.id}
-                  onClick={() => selectSubject(sub)}
-                  style={{
-                    width: '100%', textAlign: 'left', padding: '10px 12px',
-                    borderRadius: '8px', border: 'none', cursor: 'pointer',
-                    fontSize: '13px', fontWeight: 500,
-                    background: 'transparent', color: 'var(--text-primary)',
-                    marginBottom: '2px', display: 'block',
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'var(--border-color)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                >
-                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {sub.code ? `${sub.code} — ` : ''}{sub.name}
-                    </span>
-                    {sub.personal && (
-                      <span style={{ fontSize: '10px', color: '#7e22ce', background: '#fdf4ff', border: '1px solid #e9d5ff', borderRadius: '4px', padding: '1px 5px', flexShrink: 0 }}>
-                        mine
-                      </span>
+          <div style={{ padding: '0 8px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1 }}>
+              {subjects.length === 0 ? (
+                <div style={{ padding: '12px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  No subjects yet.{isCr && ' Add one below.'}
+                </div>
+              ) : (
+                subjects.map(sub => (
+                  <div key={sub.id} style={{ display: 'flex', alignItems: 'center', gap: '2px', marginBottom: '2px' }}>
+                    <button
+                      onClick={() => selectSubject(sub)}
+                      style={{
+                        flex: 1, textAlign: 'left', padding: '9px 10px',
+                        borderRadius: '8px', border: 'none', cursor: 'pointer',
+                        fontSize: '13px', fontWeight: 500,
+                        background: 'transparent', color: 'var(--text-primary)', minWidth: 0,
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--border-color)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {sub.code ? `${sub.code} — ` : ''}{sub.name}
+                        </span>
+                        {sub.personal && (
+                          <span style={{ fontSize: '10px', color: '#7e22ce', background: '#fdf4ff', border: '1px solid #e9d5ff', borderRadius: '4px', padding: '1px 5px', flexShrink: 0 }}>
+                            mine
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                    {isCr && !sub.personal && (
+                      <button
+                        onClick={() => handleDeleteSubject(sub.id, sub.name)}
+                        title="Delete subject"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '14px', padding: '4px 5px', borderRadius: '4px', flexShrink: 0 }}
+                        onMouseEnter={e => { e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.background = '#fef2f2'; }}
+                        onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-secondary)'; e.currentTarget.style.background = 'none'; }}
+                      >×</button>
                     )}
                   </div>
-                </button>
-              ))
+                ))
+              )}
+            </div>
+            {/* CR: add subject */}
+            {isCr && (
+              <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '8px' }}>
+                {showAddSubject ? (
+                  <form onSubmit={handleAddSubject} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <input
+                      type="text" value={newSubjectName} onChange={e => setNewSubjectName(e.target.value)}
+                      placeholder="Subject name *" required autoFocus disabled={subjectLoading}
+                      style={{ padding: '7px 10px', border: '1.5px solid var(--border-color)', borderRadius: '6px', fontSize: '12px', background: 'var(--bg-color)', color: 'var(--text-primary)' }}
+                    />
+                    <input
+                      type="text" value={newSubjectCode} onChange={e => setNewSubjectCode(e.target.value)}
+                      placeholder="Code (optional)" disabled={subjectLoading}
+                      style={{ padding: '7px 10px', border: '1.5px solid var(--border-color)', borderRadius: '6px', fontSize: '12px', background: 'var(--bg-color)', color: 'var(--text-primary)' }}
+                    />
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button type="submit" disabled={subjectLoading || !newSubjectName.trim()} style={{ flex: 1, padding: '6px', background: '#667eea', color: 'white', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                        {subjectLoading ? '…' : 'Add'}
+                      </button>
+                      <button type="button" onClick={() => { setShowAddSubject(false); setNewSubjectName(''); setNewSubjectCode(''); }} style={{ padding: '6px 10px', background: 'var(--bg-color)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}>
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <button
+                    onClick={() => setShowAddSubject(true)}
+                    style={{ width: '100%', padding: '7px', background: 'rgba(102,126,234,0.08)', color: '#667eea', border: '1.5px dashed rgba(102,126,234,0.4)', borderRadius: '7px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                  >+ Add Subject</button>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -743,39 +843,61 @@ function Academics({ user }) {
               ) : (
                 sections.map(sec => (
                   <div key={sec.id} style={{ display: 'flex', alignItems: 'center', gap: '2px', marginBottom: '2px' }}>
-                    <button
-                      onClick={() => !sec.hidden && setActiveSectionId(sec.id)}
-                      style={{
-                        flex: 1, textAlign: 'left', padding: '9px 10px',
-                        borderRadius: '8px', border: 'none',
-                        cursor: sec.hidden ? 'default' : 'pointer',
-                        fontSize: '13px',
-                        fontWeight: activeSectionId === sec.id ? 700 : 400,
-                        background: activeSectionId === sec.id ? 'rgba(102,126,234,0.12)' : 'transparent',
-                        color: sec.hidden ? 'var(--text-secondary)' : (activeSectionId === sec.id ? '#667eea' : 'var(--text-primary)'),
-                        display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden',
-                        opacity: sec.hidden ? 0.5 : 1,
-                      }}
-                    >
-                      <span style={{ flexShrink: 0 }}>{sectionIcon(sec.id)}</span>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: sec.hidden ? 'line-through' : 'none' }}>{sec.name}</span>
-                      {sec.cr_only && <span style={{ fontSize: '10px', color: '#d97706', marginLeft: 'auto', flexShrink: 0 }}>🔒</span>}
-                    </button>
-                    {/* Toggle (eye) for PYQ/Books; delete (×) for custom sections */}
-                    {(isCr || isSubjectOwner) && sec.is_default && !sec.non_deletable && (
-                      <button
-                        onClick={() => handleToggleSection(sec.id)}
-                        title={sec.hidden ? 'Show section' : 'Hide section'}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '14px', padding: '4px', borderRadius: '4px', flexShrink: 0 }}
-                      >{sec.hidden ? '👁' : '🚫'}</button>
-                    )}
-                    {!sec.is_default && (isCr || isSubjectOwner) && (
-                      <button
-                        onClick={() => handleDeleteSection(sec.id)}
-                        title="Delete section"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '13px', padding: '4px', borderRadius: '4px', flexShrink: 0 }}
-                      >×</button>
-                    )}
+                    {(() => {
+                      const hiddenFromMe = sec.hidden || sec.user_hidden;
+                      const isOwnCustom = !sec.is_default && sec.created_by === user?.id;
+                      return (
+                        <>
+                          <button
+                            onClick={() => !hiddenFromMe && setActiveSectionId(sec.id)}
+                            style={{
+                              flex: 1, textAlign: 'left', padding: '9px 10px',
+                              borderRadius: '8px', border: 'none',
+                              cursor: hiddenFromMe ? 'default' : 'pointer',
+                              fontSize: '13px',
+                              fontWeight: activeSectionId === sec.id ? 700 : 400,
+                              background: activeSectionId === sec.id ? 'rgba(102,126,234,0.12)' : 'transparent',
+                              color: hiddenFromMe ? 'var(--text-secondary)' : (activeSectionId === sec.id ? '#667eea' : 'var(--text-primary)'),
+                              display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden',
+                              opacity: hiddenFromMe ? 0.5 : 1,
+                            }}
+                          >
+                            <SectionIcon id={sec.id} size={13} />
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: hiddenFromMe ? 'line-through' : 'none' }}>{sec.name}</span>
+                            {sec.cr_only && <Lock size={10} strokeWidth={2} style={{ marginLeft: 'auto', flexShrink: 0, color: '#d97706' }} />}
+                            {sec.is_private && <Lock size={10} strokeWidth={2} style={{ marginLeft: 'auto', flexShrink: 0, color: '#7e22ce' }} />}
+                          </button>
+
+                          {/* CR/owner: global toggle (hide for everyone) on PYQ/Books */}
+                          {(isCr || isSubjectOwner) && sec.is_default && !sec.non_deletable && (
+                            <button
+                              onClick={() => handleToggleSection(sec.id)}
+                              title={sec.hidden ? 'Restore section for everyone' : 'Hide section for everyone (CR)'}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', borderRadius: '4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}
+                            >{sec.hidden ? <Eye size={13} strokeWidth={1.75} /> : <EyeOff size={13} strokeWidth={1.75} />}</button>
+                          )}
+
+
+                          {/* Delete (×) for custom sections: CR, subject owner, OR creator */}
+                          {!sec.is_default && (isCr || isSubjectOwner || isOwnCustom) && (
+                            <button
+                              onClick={() => handleDeleteSection(sec.id)}
+                              title="Delete section"
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '13px', padding: '4px', borderRadius: '4px', flexShrink: 0 }}
+                            >×</button>
+                          )}
+
+                          {/* Lock/unlock own custom sections (non-CR, non-owner) */}
+                          {!sec.is_default && !isCr && !isSubjectOwner && isOwnCustom && (
+                            <button
+                              onClick={() => handleLockSection(sec.id)}
+                              title={sec.is_private ? 'Unlock section (visible to all)' : 'Lock to personal view only'}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: sec.is_private ? '#7e22ce' : 'var(--text-secondary)', padding: '4px', borderRadius: '4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}
+                            >{sec.is_private ? <Unlock size={13} strokeWidth={1.75} /> : <Lock size={13} strokeWidth={1.75} />}</button>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 ))
               )}
@@ -834,7 +956,7 @@ function Academics({ user }) {
             {viewLevel === 'subjects'
               ? 'Select a subject'
               : activeSection
-                ? `${sectionIcon(activeSection.id)} ${activeSection.name}`
+                ? activeSection.name
                 : activeSubjectName
             }
           </h2>
@@ -849,7 +971,7 @@ function Academics({ user }) {
                 fontSize: '13px', fontWeight: 600, cursor: 'pointer',
               }}
             >
-              💬 Chat Files
+              <MessageSquare size={14} strokeWidth={1.75} /> Chat Files
               {chatFiles.filter(f => !f.linked).length > 0 && (
                 <span style={{
                   background: showChatPanel ? 'rgba(255,255,255,0.3)' : '#667eea',
@@ -914,7 +1036,7 @@ function Academics({ user }) {
                           outline: dragOverFolderId === f.id ? '2px solid #667eea' : 'none',
                           transition: 'outline 0.1s',
                         }}
-                      >📁 {f.name}</button>
+                      ><Folder size={11} strokeWidth={1.75} style={{ verticalAlign: 'middle', marginRight: '3px' }} />{f.name}</button>
                       <button onClick={() => handleDeleteFolder(f.id)} style={{
                         background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '12px', padding: '2px 4px',
                       }}>×</button>
@@ -995,11 +1117,11 @@ function Academics({ user }) {
                       cursor: 'grab', fontSize: '12px', maxWidth: '200px',
                     }}
                   >
-                    <span style={{ flexShrink: 0 }}>{fileIcon(cf.mime_type)}</span>
+                    <FileTypeIcon mime={cf.mime_type} size={14} />
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)' }}>
                       {cf.name}
                     </span>
-                    {cf.linked && <span style={{ color: '#16a34a', flexShrink: 0 }}>✓</span>}
+                    {cf.linked && <Check size={12} strokeWidth={2.5} style={{ color: '#16a34a', flexShrink: 0 }} />}
                   </div>
                 ))}
               </div>

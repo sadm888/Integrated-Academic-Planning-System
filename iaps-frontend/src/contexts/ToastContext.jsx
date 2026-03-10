@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
+import { Check, X, Info } from 'lucide-react';
 
 const ToastContext = createContext(null);
 
-const ICONS = { success: '✓', error: '✕', info: 'ℹ' };
+const ICONS = { success: <Check size={12} strokeWidth={2.5} />, error: <X size={12} strokeWidth={2.5} />, info: <Info size={12} strokeWidth={2} /> };
 const COLORS = {
   success: { bg: '#dcfce7', border: '#86efac', text: '#166534', icon: '#22c55e' },
   error:   { bg: '#fef2f2', border: '#fca5a5', text: '#991b1b', icon: '#ef4444' },

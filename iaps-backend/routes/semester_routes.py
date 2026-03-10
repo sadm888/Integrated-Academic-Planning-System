@@ -393,7 +393,11 @@ def nominate_cr(semester_id):
             },
             upsert=True
         )
-
+        try:
+            from routes.chat_routes import emit_to_user
+            emit_to_user(nominee_id, 'cr_nominated', {'classroom_id': semester['classroom_id'], 'semester_id': semester_id})
+        except Exception:
+            pass
         return jsonify({'message': 'Nomination sent'}), 200
 
     except Exception as e:
@@ -446,6 +450,11 @@ def nominate_add_cr(semester_id):
             },
             upsert=True
         )
+        try:
+            from routes.chat_routes import emit_to_user
+            emit_to_user(nominee_id, 'cr_nominated', {'classroom_id': semester['classroom_id'], 'semester_id': semester_id})
+        except Exception:
+            pass
         return jsonify({'message': 'Co-CR nomination sent. They must accept.'}), 200
 
     except Exception as e:

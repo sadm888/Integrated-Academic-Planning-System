@@ -57,6 +57,10 @@ export const classroomAPI = {
   removeMemberAvatar: (classroomId, userId, reason) => api.post(`/classroom/${classroomId}/remove-member-avatar`, { user_id: userId, reason }),
   flagMemberName: (classroomId, userId, reason) => api.post(`/classroom/${classroomId}/flag-member-name`, { user_id: userId, reason }),
   delete: (classroomId) => api.delete(`/classroom/${classroomId}`),
+  getActivity: (classroomId) => api.get(`/classroom/${classroomId}/activity`),
+  quitCr: (classroomId, semesterId) => api.post(`/classroom/${classroomId}/semester/${semesterId}/quit-cr`),
+  getCrNotifications: (classroomId) => api.get(`/classroom/${classroomId}/cr-notifications`),
+  getPendingNominations: (classroomId) => api.get(`/classroom/${classroomId}/pending-nominations`),
 };
 
 // Semester endpoints
@@ -127,7 +131,8 @@ export const chatAPI = {
     const token = localStorage.getItem('token') || '';
     return `${BACKEND_URL}/api/chat/file/${messageId}?token=${encodeURIComponent(token)}`;
   },
-  deleteMessage: (semesterId, messageId) => api.delete(`/chat/${semesterId}/messages/${messageId}`),
+  deleteMessage: (semesterId, messageId, mode = '') =>
+    api.delete(`/chat/${semesterId}/messages/${messageId}`, { params: mode ? { mode } : {} }),
   warnUser: (semesterId, userId, reason, messageId, warnType = 'chat') => api.post(`/chat/${semesterId}/warn`, { user_id: userId, reason, message_id: messageId, warn_type: warnType }),
   getMyWarnings: () => api.get('/chat/my-warnings'),
   dismissWarning: (warningId) => api.post(`/chat/my-warnings/${warningId}/dismiss`),
@@ -207,6 +212,10 @@ export const academicAPI = {
     api.delete(`/academics/${semesterId}/subjects/${subjectId}/sections/${sectionId}`),
   toggleSection: (semesterId, subjectId, sectionId) =>
     api.post(`/academics/${semesterId}/subjects/${subjectId}/sections/${sectionId}/toggle`),
+  userHideSection: (semesterId, subjectId, sectionId) =>
+    api.post(`/academics/${semesterId}/subjects/${subjectId}/sections/${sectionId}/user-hide`),
+  lockSection: (semesterId, subjectId, sectionId) =>
+    api.post(`/academics/${semesterId}/subjects/${subjectId}/sections/${sectionId}/lock`),
   getFolders: (semesterId, subjectId, sectionId) =>
     api.get(`/academics/${semesterId}/subjects/${subjectId}/sections/${sectionId}/folders`),
   createFolder: (semesterId, subjectId, sectionId, name) =>
@@ -267,8 +276,8 @@ export const dmAPI = {
   markRead: (classroomId, withUserId) =>
     api.post(`/dm/${classroomId}/thread/${withUserId}/read`),
   getUnreadCount: () => api.get('/dm/unread-count'),
-  deleteMessage: (classroomId, messageId) =>
-    api.delete(`/dm/${classroomId}/messages/${messageId}`),
+  deleteMessage: (classroomId, messageId, mode = '') =>
+    api.delete(`/dm/${classroomId}/messages/${messageId}`, { params: mode ? { mode } : {} }),
   getDmFileUrl: (messageId) => {
     const token = localStorage.getItem('token') || '';
     return `${BACKEND_URL}/api/dm/file/${messageId}?token=${encodeURIComponent(token)}`;

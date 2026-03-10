@@ -352,6 +352,32 @@ def get_classroom(classroom_id):
                 'code': s.get('code', '')
             } for s in subjects]
 
+            # Check for pending CR nomination for this user in this semester
+            pending_nomination = None
+            try:
+                nomination = db.cr_nominations.find_one({
+                    'semester_id': sem_id,
+                    'nominated_user_id': user_id
+                })
+                if nomination:
+                    nominator = db.users.find_one(
+                        {'_id': ObjectId(nomination['nominated_by_user_id'])},
+                        {'fullName': 1, 'username': 1}
+                    )
+                    nominator_name = (
+                        (nominator.get('fullName') or nominator.get('username', 'Unknown'))
+                        if nominator else 'Unknown'
+                    )
+                    pending_nomination = {
+                        'nominated_by': nominator_name,
+                        'nomination_type': nomination.get('nomination_type', 'transfer'),
+                        'semester_id': sem_id,
+                        'semester_name': sem['name'],
+                    }
+            except Exception as e:
+                logger.error(f"Nomination check error for sem {sem_id}: {e}")
+                pending_nomination = None
+
             formatted_semesters.append({
                 'id': sem_id,
                 'name': sem['name'],
@@ -362,6 +388,7 @@ def get_classroom(classroom_id):
                 'cr_ids': cr_ids,
                 'is_user_cr': user_id in cr_ids,
                 'subjects': formatted_subjects,
+                'pending_nomination': pending_nomination,
                 'created_at': sem['created_at'].isoformat()
             })
 
@@ -464,6 +491,122 @@ def leave_classroom(classroom_id):
     except Exception as e:
         logger.error(f"Leave classroom error: {e}")
         return jsonify({'error': 'Failed to leave classroom'}), 500
+
+
+@classroom_bp.route('/<classroom_id>/semester/<semester_id>/quit-cr', methods=['POST'])
+@cross_origin()
+@token_required
+def quit_cr(classroom_id, semester_id):
+    """Step down as CR in a semester without leaving the classroom. Only allowed if another CR exists."""
+    from database import get_db
+
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+
+        semester = db.semesters.find_one({'_id': ObjectId(semester_id), 'classroom_id': classroom_id})
+        if not semester:
+            return jsonify({'error': 'Semester not found'}), 404
+
+        cr_ids = [str(c) for c in semester.get('cr_ids', [])]
+        if user_id not in cr_ids:
+            return jsonify({'error': 'You are not a CR of this semester'}), 403
+
+        if len(cr_ids) <= 1:
+            return jsonify({'error': 'You are the only CR. Transfer your role before stepping down.'}), 400
+
+        db.semesters.update_one(
+            {'_id': ObjectId(semester_id)},
+            {'$pull': {'cr_ids': user_id}}
+        )
+
+        # Notify remaining CRs
+        try:
+            quitter = db.users.find_one({'_id': ObjectId(user_id)}, {'fullName': 1, 'username': 1})
+            quitter_name = (quitter.get('fullName') or quitter.get('username', 'Someone')) if quitter else 'Someone'
+            remaining_cr_ids = [c for c in cr_ids if c != user_id]
+            for cr_id in remaining_cr_ids:
+                db.cr_notifications.insert_one({
+                    'for_user_id': cr_id,
+                    'semester_id': semester_id,
+                    'type': 'cr_stepped_down',
+                    'message': f'{quitter_name} stepped down as CR in {semester["name"]}. You are now the sole CR.',
+                    'read': False,
+                    'created_at': datetime.utcnow(),
+                })
+        except Exception:
+            pass
+
+        return jsonify({'message': 'You have stepped down as CR'}), 200
+
+    except Exception as e:
+        logger.error(f"Quit CR error: {e}")
+        return jsonify({'error': 'Failed to quit CR role'}), 500
+
+
+@classroom_bp.route('/<classroom_id>/pending-nominations', methods=['GET'])
+@cross_origin()
+@token_required
+def get_pending_nominations(classroom_id):
+    """Return any pending CR nominations for the current user across all semesters in this classroom."""
+    from database import get_db
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+        semesters = list(db.semesters.find({'classroom_id': classroom_id}, {'_id': 1, 'name': 1}))
+        result = []
+        for sem in semesters:
+            sem_id = str(sem['_id'])
+            nomination = db.cr_nominations.find_one({
+                'semester_id': sem_id,
+                'nominated_user_id': user_id,
+            })
+            if nomination:
+                nominator = db.users.find_one(
+                    {'_id': ObjectId(nomination['nominated_by_user_id'])},
+                    {'fullName': 1, 'username': 1}
+                )
+                nominator_name = (
+                    (nominator.get('fullName') or nominator.get('username', 'Unknown'))
+                    if nominator else 'Unknown'
+                )
+                result.append({
+                    'semester_id': sem_id,
+                    'semester_name': sem['name'],
+                    'nominated_by': nominator_name,
+                    'nomination_type': nomination.get('nomination_type', 'transfer'),
+                })
+        return jsonify({'nominations': result}), 200
+    except Exception as e:
+        logger.error(f"Get pending nominations error: {e}")
+        return jsonify({'error': 'Failed to fetch nominations'}), 500
+
+
+@classroom_bp.route('/<classroom_id>/cr-notifications', methods=['GET'])
+@cross_origin()
+@token_required
+def get_classroom_cr_notifications(classroom_id):
+    """Fetch all unread CR notifications for the current user across all semesters in this classroom."""
+    from database import get_db
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+        sem_ids = [str(s['_id']) for s in db.semesters.find({'classroom_id': classroom_id}, {'_id': 1})]
+        notes = list(db.cr_notifications.find({
+            'for_user_id': user_id,
+            'semester_id': {'$in': sem_ids},
+            'read': False,
+        }).sort('created_at', -1))
+        result = [{'id': str(n['_id']), 'type': n['type'], 'message': n['message'], 'created_at': n['created_at'].isoformat()} for n in notes]
+        if notes:
+            db.cr_notifications.update_many(
+                {'_id': {'$in': [n['_id'] for n in notes]}},
+                {'$set': {'read': True}}
+            )
+        return jsonify({'notifications': result}), 200
+    except Exception as e:
+        logger.error(f"Get classroom CR notifications error: {e}")
+        return jsonify({'error': 'Failed to fetch notifications'}), 500
 
 
 @classroom_bp.route('/<classroom_id>/remove-member', methods=['POST'])
@@ -652,6 +795,81 @@ def flag_member_name(classroom_id):
     except Exception as e:
         logger.error(f"Flag member name error: {e}")
         return jsonify({'error': 'Failed to flag display name'}), 500
+
+
+@classroom_bp.route('/<classroom_id>/activity', methods=['GET'])
+@cross_origin()
+@token_required
+def get_classroom_activity(classroom_id):
+    """Return recent activity for a classroom: announcements, unread chat counts, pending requests."""
+    from database import get_db
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+
+        classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
+        if not classroom or not is_member_of_classroom(classroom, user_id):
+            return jsonify({'error': 'Access denied'}), 403
+
+        # All semesters for this classroom
+        semesters = list(db.semesters.find({'classroom_id': classroom_id}, {'_id': 1, 'name': 1}))
+        semester_ids = [str(s['_id']) for s in semesters]
+        sem_names = {str(s['_id']): s.get('name', '') for s in semesters}
+
+        # Recent announcements (last 7 days, max 10)
+        from datetime import timedelta
+        seven_days_ago = datetime.utcnow() - timedelta(days=7)
+        raw_ann = list(db.announcements.find(
+            {'semester_id': {'$in': semester_ids}, 'created_at': {'$gte': seven_days_ago}},
+            sort=[('created_at', -1)],
+            limit=10
+        ))
+        announcements = [
+            {
+                'id': str(a['_id']),
+                'text': a['text'],
+                'created_by_name': a.get('created_by_name', 'CR'),
+                'semester_name': sem_names.get(a.get('semester_id', ''), ''),
+                'created_at': a['created_at'].isoformat(),
+            }
+            for a in raw_ann
+        ]
+
+        # Unread chat counts per semester
+        unread_chat = {}
+        for sid in semester_ids:
+            last_read = db.chat_read_status.find_one({'user_id': user_id, 'semester_id': sid})
+            from datetime import datetime as _dt
+            cutoff = last_read['last_read_at'] if last_read else _dt(1970, 1, 1)
+            count = db.chat_messages.count_documents({
+                'semester_id': sid,
+                'created_at': {'$gt': cutoff},
+                'user_id': {'$ne': user_id},
+            })
+            if count > 0:
+                unread_chat[sid] = {'count': count, 'semester_name': sem_names.get(sid, '')}
+
+        # Pending join requests count (CR only)
+        pending_requests = len(classroom.get('join_requests', [])) if classroom.get('is_cr_for_user') else 0
+        # Re-check CR status properly
+        is_cr = user_id == str(classroom.get('created_by', ''))
+        if not is_cr:
+            for sem in semesters:
+                full_sem = db.semesters.find_one({'_id': sem['_id']}, {'cr_ids': 1})
+                if full_sem and user_id in [str(c) for c in full_sem.get('cr_ids', [])]:
+                    is_cr = True
+                    break
+        pending_requests = len(classroom.get('join_requests', [])) if is_cr else 0
+
+        return jsonify({
+            'announcements': announcements,
+            'unread_chat': unread_chat,
+            'pending_requests': pending_requests,
+        }), 200
+
+    except Exception as e:
+        logger.error(f"get_classroom_activity error: {e}")
+        return jsonify({'error': 'Failed to fetch activity'}), 500
 
 
 @classroom_bp.route('/<classroom_id>', methods=['DELETE'])

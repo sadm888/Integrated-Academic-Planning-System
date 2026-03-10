@@ -67,16 +67,18 @@ def _get_cr_ids(db, classroom_id):
 
 
 def _serialize_dm(msg):
+    deleted = msg.get('deleted_for_everyone', False)
     result = {
         'id': str(msg['_id']),
         'sender_id': msg['sender_id'],
         'sender_name': msg.get('sender_name', ''),
         'profile_picture': msg.get('profile_picture'),
-        'text': msg.get('text'),
-        'created_at': msg['created_at'].isoformat(),
+        'text': None if deleted else msg.get('text'),
+        'created_at': msg['created_at'].isoformat() + 'Z',
         'read_by': msg.get('read_by', []),
+        'deleted_for_everyone': deleted,
     }
-    if msg.get('file'):
+    if msg.get('file') and not deleted:
         result['file'] = msg['file']
     return result
 
@@ -265,6 +267,7 @@ def get_dm_thread(classroom_id, with_user_id):
                 {'sender_id': me, 'receiver_id': with_user_id},
                 {'sender_id': with_user_id, 'receiver_id': me},
             ],
+            'hidden_for': {'$nin': [me]},
         }
         if before_id:
             try:
@@ -295,6 +298,9 @@ def mark_dm_read(classroom_id, with_user_id):
             {'classroom_id': classroom_id, 'sender_id': with_user_id, 'receiver_id': me, 'read_by': {'$ne': me}},
             {'$addToSet': {'read_by': me}},
         )
+        # Notify the sender that their messages were read
+        room = _dm_room(classroom_id, me, with_user_id)
+        socketio.emit('dm_read', {'reader_id': me}, to=room)
         return jsonify({'message': 'Marked as read'}), 200
     except Exception as e:
         logger.error(f"mark_dm_read error: {e}")
@@ -359,18 +365,33 @@ def delete_dm_message(classroom_id, message_id):
         if msg['sender_id'] != user_id:
             return jsonify({'error': 'Not authorized'}), 403
 
-        if msg.get('file') and msg['file'].get('path'):
-            try:
-                abs_path = os.path.join(os.getcwd(), msg['file']['path'])
-                if os.path.exists(abs_path):
-                    os.remove(abs_path)
-            except OSError:
-                pass
-
-        db.dm_messages.delete_one({'_id': ObjectId(message_id)})
+        mode = request.args.get('mode', '')  # 'for_me' | 'for_everyone' | ''
         room = _dm_room(classroom_id, msg['sender_id'], msg['receiver_id'])
-        socketio.emit('dm_message_deleted', {'message_id': message_id}, to=room)
-        return jsonify({'message': 'Deleted'}), 200
+
+        if mode == 'for_me':
+            db.dm_messages.update_one(
+                {'_id': ObjectId(message_id)},
+                {'$addToSet': {'hidden_for': user_id}}
+            )
+            return jsonify({'message': 'Message hidden'}), 200
+        elif mode == 'for_everyone':
+            db.dm_messages.update_one(
+                {'_id': ObjectId(message_id)},
+                {'$set': {'deleted_for_everyone': True, 'text': None, 'file': None}}
+            )
+            socketio.emit('dm_message_tombstoned', {'message_id': message_id}, to=room)
+            return jsonify({'message': 'Message deleted for everyone'}), 200
+        else:
+            if msg.get('file') and msg['file'].get('path'):
+                try:
+                    abs_path = os.path.join(os.getcwd(), msg['file']['path'])
+                    if os.path.exists(abs_path):
+                        os.remove(abs_path)
+                except OSError:
+                    pass
+            db.dm_messages.delete_one({'_id': ObjectId(message_id)})
+            socketio.emit('dm_message_deleted', {'message_id': message_id}, to=room)
+            return jsonify({'message': 'Deleted'}), 200
 
     except Exception as e:
         logger.error(f"delete_dm_message error: {e}")

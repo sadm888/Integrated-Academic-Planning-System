@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { authAPI } from '../services/api';
 import '../styles/Auth.css';
+import { Eye } from 'lucide-react';
 
 const Login = ({ onAuthSuccess }) => {
   const navigate = useNavigate();
@@ -83,9 +84,9 @@ const Login = ({ onAuthSuccess }) => {
                   background: 'var(--bg-color)', border: '1px solid var(--border-color)',
                   borderRadius: '5px', cursor: 'pointer',
                   color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 600,
-                  padding: '3px 8px', lineHeight: 1.3, userSelect: 'none',
+                  padding: '3px 8px', lineHeight: 1.3, userSelect: 'none', display: 'flex', alignItems: 'center',
                 }}
-              >👁</button>
+              ><Eye size={13} strokeWidth={1.75} /></button>
             </div>
           </div>
 

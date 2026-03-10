@@ -1,21 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { academicAPI, chatAPI, documentAPI, BACKEND_URL } from '../services/api';
-
-function sizeLabel(bytes) {
-  if (!bytes) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function fileIcon(mime) {
-  if (!mime) return '📎';
-  if (mime.startsWith('image/')) return '🖼️';
-  if (mime.startsWith('video/')) return '🎬';
-  if (mime.startsWith('audio/')) return '🎵';
-  if (mime === 'application/pdf') return '📄';
-  return '📎';
-}
+import { sizeLabel, FileTypeIcon } from '../utils/fileUtils';
+import { Trash2, FileText, MessageSquare } from 'lucide-react';
 
 function getResourceUrl(r) {
   const token = localStorage.getItem('token') || '';
@@ -115,7 +101,7 @@ export default function FilePickerModal({ onSelect, onClose, user }) {
         background: 'var(--card-bg)', border: '1px solid var(--border-color)',
         marginBottom: '6px',
       }}>
-        <span style={{ fontSize: '20px', flexShrink: 0 }}>{fileIcon(r.mime_type)}</span>
+        <FileTypeIcon mime={r.mime_type} size={20} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
@@ -134,7 +120,7 @@ export default function FilePickerModal({ onSelect, onClose, user }) {
                 fontWeight: 600, cursor: deletingId === r.id ? 'wait' : 'pointer',
               }}
             >
-              {deletingId === r.id ? '…' : '🗑'}
+              {deletingId === r.id ? '…' : <Trash2 size={12} strokeWidth={1.75} />}
             </button>
           )}
           <button
@@ -165,7 +151,7 @@ export default function FilePickerModal({ onSelect, onClose, user }) {
         transition: 'all 0.15s',
       }}
     >
-      <span style={{ fontSize: '20px' }}>{icon}</span>
+      <span style={{ display: 'flex', alignItems: 'center' }}>{icon}</span>
       <span style={{ flex: 1, fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>{label}</span>
       <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{count} file{count !== 1 ? 's' : ''}</span>
       <span style={{ fontSize: '14px', color: 'var(--text-secondary)', transition: 'transform 0.2s', transform: activeSection === id ? 'rotate(90deg)' : 'none' }}>›</span>
@@ -213,14 +199,14 @@ export default function FilePickerModal({ onSelect, onClose, user }) {
             <p style={{ color: '#dc2626', textAlign: 'center', padding: '16px' }}>{error}</p>
           ) : (
             <>
-              <SectionHeader id="docs" icon="📄" label="Documents" count={docFiles.length} />
+              <SectionHeader id="docs" icon={<FileText size={20} strokeWidth={1.75} />} label="Documents" count={docFiles.length} />
               {activeSection === 'docs' && (
                 <div style={{ marginBottom: '12px', paddingLeft: '4px' }}>
                   {renderFiles(docFiles, 'No documents found.')}
                 </div>
               )}
 
-              <SectionHeader id="chat" icon="💬" label="Chat Files" count={chatFiles.length} />
+              <SectionHeader id="chat" icon={<MessageSquare size={20} strokeWidth={1.75} />} label="Chat Files" count={chatFiles.length} />
               {activeSection === 'chat' && (
                 <div style={{ marginBottom: '12px', paddingLeft: '4px' }}>
                   {renderFiles(chatFiles, 'No chat files found.')}

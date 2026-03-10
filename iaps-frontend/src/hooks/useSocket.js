@@ -38,11 +38,12 @@ export function useSocket(semesterId, handlers = {}) {
     socket.on('disconnect', () => setConnected(false));
     socket.on('connect_error', () => setConnected(false));
 
-    socket.on('new_message',       (msg)  => handlersRef.current.onMessage?.(msg));
-    socket.on('message_deleted',   (data) => handlersRef.current.onDeleted?.(data));
-    socket.on('warn_notification', (data) => handlersRef.current.onWarn?.(data));
-    socket.on('message_pinned',    (data) => handlersRef.current.onPinned?.(data));
-    socket.on('message_unpinned',  (data) => handlersRef.current.onUnpinned?.(data));
+    socket.on('new_message',        (msg)  => handlersRef.current.onMessage?.(msg));
+    socket.on('message_deleted',    (data) => handlersRef.current.onDeleted?.(data));
+    socket.on('message_tombstoned', (data) => handlersRef.current.onTombstoned?.(data));
+    socket.on('warn_notification',  (data) => handlersRef.current.onWarn?.(data));
+    socket.on('message_pinned',     (data) => handlersRef.current.onPinned?.(data));
+    socket.on('message_unpinned',   (data) => handlersRef.current.onUnpinned?.(data));
 
     return () => {
       socket.disconnect();

@@ -4,6 +4,8 @@ import { chatAPI, semesterAPI, classroomAPI, settingsAPI, documentAPI, BACKEND_U
 import Avatar from '../components/Avatar';
 import { useSocket } from '../hooks/useSocket';
 import FilePickerModal from '../components/FilePickerModal';
+import { Image, Video, Music, FileText, Paperclip, Pin, Trash2, EyeOff, Eye, AlertTriangle, Folder, FolderOpen, Lock, Clock, X } from 'lucide-react';
+import { FileTypeIcon } from '../utils/fileUtils';
 
 // ── File category helpers ────────────────────────────────────────────────────
 function fileCategory(mime) {
@@ -15,24 +17,28 @@ function fileCategory(mime) {
 }
 
 const CATEGORY_META = {
-  images:    { label: 'Images',    icon: '🖼️' },
-  videos:    { label: 'Videos',    icon: '🎬' },
-  audio:     { label: 'Audio',     icon: '🎵' },
-  documents: { label: 'Documents', icon: '📄' },
+  images:    { label: 'Images',    Icon: Image },
+  videos:    { label: 'Videos',    Icon: Video },
+  audio:     { label: 'Audio',     Icon: Music },
+  documents: { label: 'Documents', Icon: FileText },
 };
 
 // ── Files & Media panel ──────────────────────────────────────────────────────
 function FilesPanel({ messages }) {
   const [openSections, setOpenSections] = useState({ images: true, videos: true, audio: true, documents: true });
+  const [brokenFiles, setBrokenFiles] = useState(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
 
   const grouped = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
     const g = { images: [], videos: [], audio: [], documents: [] };
     for (const msg of messages) {
       if (!msg.file) continue;
+      if (q && !msg.file.name?.toLowerCase().includes(q)) continue;
       g[fileCategory(msg.file.mime_type)].push(msg);
     }
     return g;
-  }, [messages]);
+  }, [messages, searchQuery]);
 
   const total = Object.values(grouped).reduce((s, a) => s + a.length, 0);
 
@@ -57,14 +63,26 @@ function FilesPanel({ messages }) {
     }}>
       <div style={{
         padding: '14px 16px', borderBottom: '1px solid var(--border-color)',
-        fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         flexShrink: 0,
       }}>
-        <span>Files & Media</span>
-        <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: 400 }}>
-          {total} {total === 1 ? 'file' : 'files'}
-        </span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+          <span style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>Files & Media</span>
+          <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: 400 }}>
+            {total} {total === 1 ? 'file' : 'files'}
+          </span>
+        </div>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder="Search files…"
+          style={{
+            width: '100%', boxSizing: 'border-box',
+            padding: '6px 10px', fontSize: '13px',
+            background: 'var(--bg-color)', color: 'var(--text-primary)',
+            border: '1px solid var(--border-color)', borderRadius: '6px', outline: 'none',
+          }}
+        />
       </div>
 
       {total === 0 && (
@@ -87,7 +105,7 @@ function FilesPanel({ messages }) {
                 cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)',
               }}
             >
-              <span>{meta.icon} {meta.label} ({items.length})</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><meta.Icon size={14} strokeWidth={1.75} /> {meta.label} ({items.length})</span>
               <span style={{ fontSize: '10px', color: '#9ca3af' }}>{open ? '▲' : '▼'}</span>
             </button>
 
@@ -100,15 +118,17 @@ function FilesPanel({ messages }) {
                   const isVideo = mime_type?.startsWith('video/');
                   const isAudio = mime_type?.startsWith('audio/');
 
+                  const isBroken = brokenFiles.has(msg.id);
                   return (
                     <div key={msg.id} style={{
                       padding: '8px 16px', display: 'flex', gap: '10px',
-                      alignItems: 'flex-start', cursor: 'pointer',
+                      alignItems: 'flex-start', cursor: isBroken ? 'default' : 'pointer',
                       transition: 'background 0.15s',
+                      opacity: isBroken ? 0.5 : 1,
                     }}
-                      onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-color)'}
+                      onMouseEnter={e => !isBroken && (e.currentTarget.style.background = 'var(--bg-color)')}
                       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                      onClick={() => window.open(fileUrl, '_blank')}
+                      onClick={() => !isBroken && window.open(fileUrl, '_blank')}
                     >
                       <div style={{
                         width: '40px', height: '40px', borderRadius: '6px',
@@ -121,9 +141,9 @@ function FilesPanel({ messages }) {
                             src={fileUrl}
                             alt=""
                             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                            onError={e => { e.target.style.display = 'none'; e.target.parentNode.textContent = '🖼️'; }}
+                            onError={() => setBrokenFiles(prev => new Set([...prev, msg.id]))}
                           />
-                        ) : isVideo ? '🎬' : isAudio ? '🎵' : (mime_type === 'application/pdf' ? '📄' : '📎')}
+                        ) : <FileTypeIcon mime={mime_type} size={20} />}
                       </div>
 
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -136,6 +156,9 @@ function FilesPanel({ messages }) {
                         <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>
                           {msg.full_name || msg.username} · {formatDate(msg.created_at)}
                         </div>
+                        {isBroken && (
+                          <div style={{ fontSize: '11px', color: '#dc2626', marginTop: '2px' }}>File unavailable</div>
+                        )}
                         {size > 0 && (
                           <div style={{ fontSize: '11px', color: '#b0b7c3' }}>
                             {sizeLabel(size)}
@@ -183,6 +206,7 @@ function Chat({ user }) {
   const [warnType, setWarnType]           = useState('chat'); // 'chat' | 'picture'
   const [showScrollBtn, setShowScrollBtn] = useState(false);  // #3
   const [newMsgCount, setNewMsgCount]     = useState(0);
+  const [deleteMenu, setDeleteMenu]       = useState(null); // { msgId, x, y }
 
   // Attach-from-docs states
   const [showAttachMenu, setShowAttachMenu]     = useState(false);
@@ -266,10 +290,21 @@ function Chat({ user }) {
 
   const handleUnpinned = useCallback(({ message_id }) => {
     if (message_id) {
-      setPinnedMessages(prev => prev.filter(m => m.id !== message_id));
+      setPinnedMessages(prev => {
+        const next = prev.filter(m => m.id !== message_id);
+        setCurrentPinIdx(i => (next.length === 0 ? 0 : i % next.length));
+        return next;
+      });
     } else {
       setPinnedMessages([]);
+      setCurrentPinIdx(0);
     }
+  }, []);
+
+  const handleTombstoned = useCallback(({ message_id }) => {
+    setMessages(prev => prev.map(m =>
+      m.id === message_id ? { ...m, deleted_for_everyone: true, text: null, file: null } : m
+    ));
   }, []);
 
   // #7 + #16 — useSocket hook (replaces manual socket setup, exposes connected)
@@ -277,8 +312,9 @@ function Chat({ user }) {
     onMessage:  handleMessage,
     onDeleted:  handleDeleted,
     onWarn:     handleWarnSocket,
-    onPinned:   handlePinned,
-    onUnpinned: handleUnpinned,
+    onPinned:     handlePinned,
+    onUnpinned:   handleUnpinned,
+    onTombstoned: handleTombstoned,
   });
 
   // ── Close attach menu on outside click ────────────────────────────────────
@@ -292,6 +328,27 @@ function Chat({ user }) {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showAttachMenu]);
+
+  // ── Close delete context menu on outside click ─────────────────────────────
+  useEffect(() => {
+    if (!deleteMenu) return;
+    const handler = () => setDeleteMenu(null);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [deleteMenu]);
+
+  const handleDeleteWithMode = async (msgId, mode) => {
+    setDeleteMenu(null);
+    try {
+      await chatAPI.deleteMessage(semesterId, msgId, mode);
+      if (mode === 'for_me') {
+        setMessages(prev => prev.filter(m => m.id !== msgId));
+      }
+      // 'for_everyone' is handled by the socket 'message_tombstoned' event
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete message');
+    }
+  };
 
   // ── Auto-scroll only when already near the bottom ─────────────────────────
   useEffect(() => {
@@ -537,6 +594,14 @@ function Chat({ user }) {
   const renderContent = (msg) => {
     const isMe = msg.user_id === user?.id;
 
+    if (msg.deleted_for_everyone) {
+      return (
+        <span style={{ color: isMe ? 'rgba(255,255,255,0.55)' : '#9ca3af', fontStyle: 'italic', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <EyeOff size={13} strokeWidth={1.75} /> This message was deleted
+        </span>
+      );
+    }
+
     if (!msg.file) {
       return <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.text}</span>;
     }
@@ -552,7 +617,7 @@ function Chat({ user }) {
             src={fileUrl} alt={name}
             style={{ maxWidth: '280px', maxHeight: '220px', borderRadius: '8px', display: 'block', cursor: 'pointer' }}
             onClick={() => window.open(fileUrl, '_blank')}
-            onError={(e) => { e.target.style.display = 'none'; }}
+            onError={(e) => { e.target.style.display = 'none'; e.target.onclick = null; }}
           />
         </div>
       );
@@ -595,7 +660,7 @@ function Chat({ user }) {
             textDecoration: 'none', fontSize: '13px', fontWeight: 500,
           }}
         >
-          <span style={{ fontSize: '18px' }}>{isPdf ? '📄' : '📎'}</span>
+          <FileTypeIcon mime={mime_type} size={18} />
           <span style={{ wordBreak: 'break-all' }}>{name}{sizeLabel}</span>
         </a>
       </div>
@@ -666,7 +731,7 @@ function Chat({ user }) {
               flexShrink: 0,
             }}
           >
-            📁 Files{fileCount > 0 && <span style={{
+            <Folder size={14} strokeWidth={1.75} style={{ marginRight: '4px' }} /> Files{fileCount > 0 && <span style={{
               background: showFiles ? 'rgba(255,255,255,0.3)' : '#667eea',
               color: 'white', borderRadius: '999px', padding: '1px 7px', fontSize: '11px',
             }}>{fileCount}</span>}
@@ -680,7 +745,7 @@ function Chat({ user }) {
             padding: '7px 24px', fontSize: '13px', color: '#92400e',
             display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0,
           }}>
-            <span>⚠️</span> Reconnecting… messages may be delayed.
+            <AlertTriangle size={14} strokeWidth={1.75} /> Reconnecting… messages may be delayed.
           </div>
         )}
 
@@ -702,7 +767,7 @@ function Chat({ user }) {
             padding: '12px 24px', flexShrink: 0,
             display: 'flex', alignItems: 'flex-start', gap: '12px',
           }}>
-            <span style={{ fontSize: '20px', flexShrink: 0 }}>⚠️</span>
+            <AlertTriangle size={20} strokeWidth={1.75} style={{ flexShrink: 0, color: '#92400e' }} />
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, color: '#92400e', fontSize: '13px', marginBottom: '2px' }}>
                 Your message was removed by {warnBanner.crName}
@@ -750,7 +815,7 @@ function Chat({ user }) {
                   ))}
                 </div>
               )}
-              <span style={{ fontSize: '14px', flexShrink: 0 }}>📌</span>
+              <Pin size={14} strokeWidth={1.75} style={{ flexShrink: 0, color: '#667eea' }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ fontSize: '11px', color: '#667eea', fontWeight: 600 }}>
                   Pinned message
@@ -764,10 +829,10 @@ function Chat({ user }) {
                   margin: '1px 0 0', fontSize: '13px', color: 'var(--text-primary)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>
-                  {pm.text || (pm.file ? `📎 ${pm.file.name || 'File'}` : '📎 File')}
+                  {pm.text || (pm.file ? pm.file.name || 'File' : 'File')}
                 </p>
               </div>
-              {semester?.is_user_cr && (
+              {(semester?.is_user_cr || semester?.is_user_mod) && (
                 <button
                   onClick={e => { e.stopPropagation(); handleUnpin(pm.id); }}
                   title="Unpin"
@@ -890,8 +955,9 @@ function Chat({ user }) {
                       <div
                         onMouseEnter={() => setHoveredMsgId(msg.id)}
                         style={{
-                          position: 'absolute', top: '-34px',
-                          [isMe ? 'right' : 'left']: 0,
+                          position: 'absolute',
+                          top: '50%', transform: 'translateY(-50%)',
+                          [isMe ? 'right' : 'left']: 'calc(100% + 6px)',
                           display: 'flex', gap: '2px',
                           background: 'var(--card-bg)', borderRadius: '6px', padding: '4px 8px',
                           boxShadow: '0 2px 8px rgba(0,0,0,0.15)', border: '1px solid var(--border-color)',
@@ -912,30 +978,69 @@ function Chat({ user }) {
                           <button
                             onClick={() => handlePin(msg.id)}
                             title="Pin message"
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', padding: '2px 5px', borderRadius: '4px' }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', padding: '2px 5px', borderRadius: '4px', display: 'flex', alignItems: 'center' }}
                             onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-color)'}
                             onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                          >📌</button>
+                          ><Pin size={14} strokeWidth={1.75} /></button>
                         )}
                         {/* #2 — Warn button (CR/mod, other users only) */}
                         {isCrOrMod && !isMe && (
                           <button
                             onClick={() => openWarnModal(msg.user_id, msg.full_name || msg.username, msg.id)}
                             title="Warn user"
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '15px', padding: '2px 5px', borderRadius: '4px' }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '15px', padding: '2px 5px', borderRadius: '4px', display: 'flex', alignItems: 'center' }}
                             onMouseEnter={e => e.currentTarget.style.background = '#fef3c7'}
                             onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                          >⚠️</button>
+                          ><AlertTriangle size={14} strokeWidth={1.75} color="#d97706" /></button>
                         )}
                         {/* Kick button (CR only) */}
                         {semester?.is_user_cr && !isMe && (
                           <button
                             onClick={() => handleKickUser(msg.user_id, msg.full_name || msg.username)}
                             title="Remove from classroom"
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '15px', padding: '2px 5px', borderRadius: '4px' }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '15px', padding: '2px 5px', borderRadius: '4px', display: 'flex', alignItems: 'center' }}
                             onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
                             onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                          >🚫</button>
+                          ><EyeOff size={14} strokeWidth={1.75} color="#dc2626" /></button>
+                        )}
+                        {/* Delete menu (own message) */}
+                        {isMe && !msg.deleted_for_everyone && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteMenu({ msgId: msg.id, x: e.clientX, y: e.clientY });
+                            }}
+                            title="Delete message"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', padding: '2px 5px', borderRadius: '4px', color: '#9ca3af', display: 'flex', alignItems: 'center' }}
+                            onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                          ><Trash2 size={14} strokeWidth={1.75} /></button>
+                        )}
+                        {/* Delete for me (any member on others' messages) */}
+                        {!isMe && !isCrOrMod && !msg.deleted_for_everyone && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteWithMode(msg.id, 'for_me');
+                            }}
+                            title="Hide message"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', padding: '2px 5px', borderRadius: '4px', color: '#9ca3af', display: 'flex', alignItems: 'center' }}
+                            onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                          ><Trash2 size={14} strokeWidth={1.75} /></button>
+                        )}
+                        {/* Delete button (CR/mod on others' messages) */}
+                        {isCrOrMod && !isMe && !msg.deleted_for_everyone && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteWithMode(msg.id, '');
+                            }}
+                            title="Delete message (CR)"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', padding: '2px 5px', borderRadius: '4px', color: '#9ca3af', display: 'flex', alignItems: 'center' }}
+                            onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                          ><Trash2 size={14} strokeWidth={1.75} /></button>
                         )}
                       </div>
                     )}
@@ -999,7 +1104,7 @@ function Chat({ user }) {
             padding: '8px 20px', background: 'var(--card-bg)', borderTop: '1px solid var(--border-color)',
             display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0,
           }}>
-            <span style={{ fontSize: '18px' }}>📎</span>
+            <Paperclip size={18} strokeWidth={1.75} style={{ flexShrink: 0, color: 'var(--text-secondary)' }} />
             <span style={{ flex: 1, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)' }}>
               {pendingChatFile.name}
             </span>
@@ -1010,9 +1115,9 @@ function Chat({ user }) {
             </span>
             <button
               onClick={() => setPendingChatFile(null)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '16px', lineHeight: 1, padding: '2px 4px' }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '16px', lineHeight: 1, padding: '2px 4px', display: 'flex', alignItems: 'center' }}
               title="Remove"
-            >✕</button>
+            ><X size={16} strokeWidth={1.75} /></button>
           </div>
         )}
 
@@ -1044,7 +1149,7 @@ function Chat({ user }) {
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}
             >
-              {(uploading || attachingDoc) ? '⏳' : '📎'}
+              {(uploading || attachingDoc) ? <Clock size={18} strokeWidth={1.75} /> : <Paperclip size={18} strokeWidth={1.75} />}
             </button>
 
             {showAttachMenu && (
@@ -1057,10 +1162,10 @@ function Chat({ user }) {
                 }}
               >
                 {[
-                  { icon: '💻', label: 'From device', action: () => { setShowAttachMenu(false); fileInputRef.current?.click(); } },
-                  { icon: '📁', label: 'From Files', action: () => { setShowAttachMenu(false); setShowFilePicker(true); } },
-                  { icon: '📂', label: 'From semester documents', action: openSemDocs },
-                  { icon: '🔒', label: 'From personal documents', action: openPersonalDocs },
+                  { icon: <Paperclip size={14} strokeWidth={1.75} />, label: 'From device', action: () => { setShowAttachMenu(false); fileInputRef.current?.click(); } },
+                  { icon: <Folder size={14} strokeWidth={1.75} />, label: 'From Files', action: () => { setShowAttachMenu(false); setShowFilePicker(true); } },
+                  { icon: <FolderOpen size={14} strokeWidth={1.75} />, label: 'From semester documents', action: openSemDocs },
+                  { icon: <Lock size={14} strokeWidth={1.75} />, label: 'From personal documents', action: openPersonalDocs },
                 ].map(({ icon, label, action }) => (
                   <button
                     key={label}
@@ -1112,9 +1217,44 @@ function Chat({ user }) {
               flexShrink: 0, transition: 'background 0.2s',
             }}
             title="Send"
-          >➤</button>
+          ><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
         </div>
       </div>
+
+      {/* ── Delete context menu ── */}
+      {deleteMenu && (
+        <div
+          onMouseDown={e => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            top: Math.min(deleteMenu.y, window.innerHeight - 100),
+            left: Math.min(deleteMenu.x, window.innerWidth - 180),
+            background: 'var(--card-bg)', borderRadius: '10px',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.2)', border: '1px solid var(--border-color)',
+            zIndex: 500, overflow: 'hidden', minWidth: '160px',
+          }}
+        >
+          {[
+            { label: 'Delete for me', icon: <Eye size={14} strokeWidth={1.75} />, mode: 'for_me', color: 'var(--text-primary)' },
+            { label: 'Delete for everyone', icon: <Trash2 size={14} strokeWidth={1.75} />, mode: 'for_everyone', color: '#dc2626' },
+          ].map(({ label, icon, mode, color }) => (
+            <button
+              key={mode}
+              onMouseDown={() => handleDeleteWithMode(deleteMenu.msgId, mode)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                width: '100%', padding: '11px 16px', background: 'none',
+                border: 'none', cursor: 'pointer', fontSize: '13px',
+                color, textAlign: 'left', fontWeight: 500,
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-color)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}
+            >
+              <span>{icon}</span><span>{label}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── Right: Files & Media panel ── */}
       {showFiles && <FilesPanel messages={messages} />}
@@ -1208,7 +1348,7 @@ function Chat({ user }) {
                       onMouseEnter={e => e.currentTarget.style.background = 'rgba(102,126,234,0.08)'}
                       onMouseLeave={e => e.currentTarget.style.background = 'var(--bg-color)'}
                     >
-                      <span style={{ fontSize: '20px' }}>📄</span>
+                      <FileText size={20} strokeWidth={1.75} style={{ flexShrink: 0, color: 'var(--text-secondary)' }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name || doc.filename}</div>
                         {doc.created_at && <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{new Date(doc.created_at).toLocaleDateString()}</div>}
@@ -1249,8 +1389,8 @@ function Chat({ user }) {
                     onPointerLeave={() => { if (persDocsPwRef.current) persDocsPwRef.current.type = 'password'; }}
                     tabIndex={-1}
                     title="Hold to show password"
-                    style={{ position: 'absolute', right: '8px', top: 'calc(50% - 3px)', transform: 'translateY(-50%)', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '5px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 600, padding: '3px 8px', lineHeight: 1.3, userSelect: 'none' }}
-                  >👁</button>
+                    style={{ position: 'absolute', right: '8px', top: 'calc(50% - 3px)', transform: 'translateY(-50%)', background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '5px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 600, padding: '3px 8px', lineHeight: 1.3, userSelect: 'none', display: 'flex', alignItems: 'center' }}
+                  ><Eye size={13} strokeWidth={1.75} /></button>
                 </div>
                 {persDocsPwErr && <p style={{ color: '#ef4444', fontSize: '12px', margin: '0 0 10px' }}>{persDocsPwErr}</p>}
                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}>
@@ -1275,7 +1415,7 @@ function Chat({ user }) {
                           onMouseEnter={e => e.currentTarget.style.background = 'rgba(102,126,234,0.08)'}
                           onMouseLeave={e => e.currentTarget.style.background = 'var(--bg-color)'}
                         >
-                          <span style={{ fontSize: '20px' }}>🔒</span>
+                          <Lock size={20} strokeWidth={1.75} style={{ flexShrink: 0, color: 'var(--text-secondary)' }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.label || doc.filename}</div>
                             {doc.created_at && <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{new Date(doc.created_at).toLocaleDateString()}</div>}

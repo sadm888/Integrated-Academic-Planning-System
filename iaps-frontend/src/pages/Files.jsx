@@ -1,22 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { academicAPI, chatAPI, BACKEND_URL } from '../services/api';
-
-function sizeLabel(bytes) {
-  if (!bytes) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function fileIcon(mime) {
-  if (!mime) return '📎';
-  if (mime.startsWith('image/')) return '🖼️';
-  if (mime.startsWith('video/')) return '🎬';
-  if (mime.startsWith('audio/')) return '🎵';
-  if (mime === 'application/pdf') return '📄';
-  return '📎';
-}
+import { FileTypeIcon, sizeLabel } from '../utils/fileUtils';
 
 function Files({ user }) {
   const [resources, setResources] = useState([]);
@@ -152,7 +137,7 @@ function Files({ user }) {
                             padding: '8px 12px', borderRadius: '8px',
                             background: 'var(--card-bg)', border: '1px solid var(--border-color)',
                           }}>
-                            <span style={{ fontSize: '18px', flexShrink: 0 }}>{fileIcon(r.mime_type)}</span>
+                            <FileTypeIcon mime={r.mime_type} size={18} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <a
                                 href={url}

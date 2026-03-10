@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { semesterAPI, subjectAPI, documentAPI, todoAPI, scheduleAPI, classroomAPI, announcementAPI, linksAPI } from '../services/api';
 import '../styles/Classroom.css';
+import { Link as LinkIcon, Trash2 } from 'lucide-react';
 
 const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -31,11 +32,11 @@ function SemesterDetail({ user }) {
   const [todos, setTodos] = useState([]);
   const [newTodoText, setNewTodoText] = useState('');
   const [newTodoSubjectId, setNewTodoSubjectId] = useState('');
+  const [newTodoDueDate, setNewTodoDueDate] = useState('');
   const [todoLoading, setTodoLoading] = useState(false);
   const [todoFilterSubjectId, setTodoFilterSubjectId] = useState('');
 
-  // CR transfer notifications
-  const [crNotifications, setCrNotifications] = useState([]);
+  const [docSearch, setDocSearch] = useState('');
 
   // Links
   const [links, setLinks] = useState([]);
@@ -51,15 +52,9 @@ function SemesterDetail({ user }) {
   const [confirmPostAnnouncement, setConfirmPostAnnouncement] = useState(false);
   const [confirmDeleteAnnouncement, setConfirmDeleteAnnouncement] = useState(null); // { id, text }
 
-  // CR Transfer
-  const [showTransferModal, setShowTransferModal] = useState(false);
-  const [transferNomineeId, setTransferNomineeId] = useState('');
-  const [transferLoading, setTransferLoading] = useState(false);
-
-  // Add Co-CR (additive, nominator keeps role)
-  const [showAddCrModal, setShowAddCrModal] = useState(false);
-  const [addCrTargetId, setAddCrTargetId] = useState('');
-  const [addCrLoading, setAddCrLoading] = useState(false);
+  // Delete semester
+  const [confirmDeleteSemester, setConfirmDeleteSemester] = useState(false);
+  const [deleteSemesterLoading, setDeleteSemesterLoading] = useState(false);
 
   // Schedule
   const [scheduleRequests, setScheduleRequests] = useState([]);
@@ -84,10 +79,9 @@ function SemesterDetail({ user }) {
       setClassroom(classRes.data.classroom);
       loadDocuments();
       loadTodos();
-      loadSchedule(classRes.data.classroom);
+      loadSchedule();
       loadAnnouncements();
       loadLinks();
-      loadCrNotifications();
     } catch (err) {
       setError('Failed to load semester');
     } finally {
@@ -125,15 +119,6 @@ function SemesterDetail({ user }) {
     }
   };
 
-  const loadCrNotifications = async () => {
-    try {
-      const res = await semesterAPI.getCrNotifications(semesterId);
-      setCrNotifications(res.data.notifications || []);
-    } catch (err) {
-      // non-critical, ignore
-    }
-  };
-
   const loadLinks = async () => {
     try {
       const res = await linksAPI.list(semesterId);
@@ -165,7 +150,7 @@ function SemesterDetail({ user }) {
     }
   };
 
-  const loadSchedule = async (classroomData) => {
+  const loadSchedule = async () => {
     try {
       const res = await scheduleAPI.listForClassroom(classroomId);
       setScheduleRequests(res.data.schedule_requests || []);
@@ -253,10 +238,12 @@ function SemesterDetail({ user }) {
         semester_id: semesterId,
         text: newTodoText.trim(),
         subject_id: newTodoSubjectId || undefined,
+        due_date: newTodoDueDate || undefined,
       });
       setTodos(prev => [res.data.todo, ...prev]);
       setNewTodoText('');
       setNewTodoSubjectId('');
+      setNewTodoDueDate('');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to add todo');
     } finally { setTodoLoading(false); }
@@ -375,57 +362,18 @@ function SemesterDetail({ user }) {
     }
   };
 
-  // ── CR Transfer & Co-CR ──────────────────────────────────────────────────────
+  // ── Delete Semester ──────────────────────────────────────────────────────────
 
-  const handleAddCoCr = async (e) => {
-    e.preventDefault();
-    if (!addCrTargetId) return;
-    setAddCrLoading(true);
-    setError('');
+  const handleDeleteSemester = async () => {
+    setDeleteSemesterLoading(true);
     try {
-      await semesterAPI.nominateAddCr(semesterId, addCrTargetId);
-      setSuccess('Co-CR nomination sent. They must accept to get CR access.');
-      setShowAddCrModal(false);
-      setAddCrTargetId('');
+      await semesterAPI.delete(semesterId);
+      navigate(`/classroom/${classroomId}`);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to send co-CR nomination');
-    } finally { setAddCrLoading(false); }
-  };
-
-  const handleNominateCr = async (e) => {
-    e.preventDefault();
-    if (!transferNomineeId) return;
-    setTransferLoading(true);
-    setError('');
-    try {
-      await semesterAPI.nominateCr(semesterId, transferNomineeId);
-      setSuccess('Nomination sent. The member must accept to complete the transfer.');
-      setShowTransferModal(false);
-      setTransferNomineeId('');
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to send nomination');
-    } finally { setTransferLoading(false); }
-  };
-
-  const handleAcceptCr = async () => {
-    setError('');
-    try {
-      await semesterAPI.acceptCr(semesterId);
-      setSuccess('You are now the CR!');
-      loadAll();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to accept nomination');
-    }
-  };
-
-  const handleDeclineCr = async () => {
-    setError('');
-    try {
-      await semesterAPI.declineCr(semesterId);
-      setSuccess('Nomination declined.');
-      loadAll();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to decline nomination');
+      setError(err.response?.data?.error || 'Failed to delete semester');
+      setConfirmDeleteSemester(false);
+    } finally {
+      setDeleteSemesterLoading(false);
     }
   };
 
@@ -455,117 +403,49 @@ function SemesterDetail({ user }) {
   return (
     <div className="classroom-container">
       {/* Header */}
-      <div className="classroom-header-section">
-        <div>
-          <button onClick={() => navigate(`/classroom/${classroomId}`)} style={{
-            background: 'none', border: 'none', color: '#667eea',
-            cursor: 'pointer', fontSize: '14px', marginBottom: '8px', padding: 0,
-          }}>
-            &larr; Back to {classroom?.name || 'Classroom'}
-          </button>
-          <h1>{semester.name}</h1>
-          <p style={{ color: '#888', margin: '4px 0', fontSize: '14px' }}>
-            {semester.type} · {semester.year} {semester.session && `· ${semester.session}`}
-            {semester.is_active && (
-              <span style={{ marginLeft: '10px', background: '#dcfce7', color: '#166534', padding: '2px 10px', borderRadius: '10px', fontSize: '12px', fontWeight: 600 }}>Active</span>
-            )}
-          </p>
+      <div style={{ marginBottom: '4px' }}>
+        <button onClick={() => navigate(`/classroom/${classroomId}`)} style={{
+          background: 'none', border: 'none', color: '#667eea',
+          cursor: 'pointer', fontSize: '13px', marginBottom: '10px', padding: 0,
+        }}>
+          &larr; Back to {classroom?.name || 'Classroom'}
+        </button>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+          <div>
+            <h1 style={{ margin: 0 }}>{semester.name}</h1>
+            <p style={{ color: '#888', margin: '4px 0 0', fontSize: '14px' }}>
+              {semester.type} · {semester.year}{semester.session && ` · ${semester.session}`}
+              {semester.is_active && (
+                <span style={{ marginLeft: '10px', background: '#dcfce7', color: '#166534', padding: '2px 10px', borderRadius: '10px', fontSize: '12px', fontWeight: 600 }}>Active</span>
+              )}
+            </p>
+          </div>
         </div>
-        <div className="action-buttons">
-          <button
-            onClick={() => navigate(`/classroom/${classroomId}/semester/${semesterId}/chat`)}
-            style={{ background: '#667eea', color: 'white', borderRadius: '8px', padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '14px' }}
-          >
-            Chat
+      </div>
+
+      {/* Sub-navbar */}
+      <div className="page-subnav">
+        <button className="page-subnav-item" onClick={() => navigate(`/classroom/${classroomId}/semester/${semesterId}/chat`)}>
+          Chat
+        </button>
+        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/files`}>
+          Subjects
+        </Link>
+        {isCr && (
+          <button className="page-subnav-item accent" onClick={() => setShowPostScheduleModal(true)}>
+            Post Schedule
           </button>
-          <Link
-            to={`/classroom/${classroomId}/semester/${semesterId}/files`}
-            style={{
-              background: 'rgba(102,126,234,0.12)', color: '#667eea', borderRadius: '8px',
-              padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600,
-              fontSize: '14px', textDecoration: 'none', display: 'inline-block',
-            }}
-          >
-            Subjects
-          </Link>
-          {isCr && (
-            <>
-              <button className="btn-primary" onClick={() => setShowPostScheduleModal(true)} style={{ background: '#4338ca' }}>
-                Post Schedule
-              </button>
-              <button onClick={() => { setShowAddCrModal(true); setAddCrTargetId(''); }} style={{
-                background: 'rgba(102,126,234,0.12)', color: '#667eea', border: '1px solid rgba(102,126,234,0.3)',
-                borderRadius: '8px', padding: '8px 16px', fontSize: '14px',
-                fontWeight: 600, cursor: 'pointer',
-              }}>
-                + Co-CR
-              </button>
-              <button onClick={() => setShowTransferModal(true)} style={{
-                background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a',
-                borderRadius: '8px', padding: '8px 16px', fontSize: '14px',
-                fontWeight: 600, cursor: 'pointer',
-              }}>
-                Transfer CR
-              </button>
-            </>
-          )}
-        </div>
+        )}
+        <div className="page-subnav-spacer" />
+        {isCr && (
+          <button className="page-subnav-item danger" onClick={() => setConfirmDeleteSemester(true)}>
+            Delete Semester
+          </button>
+        )}
       </div>
 
       {error && <div className="error-message">{error}</div>}
       {success && <div className="success-message">{success}</div>}
-
-      {/* CR transfer result notifications */}
-      {crNotifications.map(note => (
-        <div key={note.id} style={{
-          background: note.type === 'cr_accepted' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.08)',
-          border: `1.5px solid ${note.type === 'cr_accepted' ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.35)'}`,
-          borderRadius: '10px', padding: '12px 18px', marginBottom: '12px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
-        }}>
-          <p style={{ margin: 0, fontSize: '14px', color: 'var(--text-primary)' }}>
-            {note.type === 'cr_accepted' ? '✅' : '❌'} <strong>CR Transfer:</strong> {note.message}
-          </p>
-          <button onClick={() => setCrNotifications(prev => prev.filter(n => n.id !== note.id))} style={{
-            background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '16px', flexShrink: 0,
-          }}>&times;</button>
-        </div>
-      ))}
-
-      {/* CR nomination banner */}
-      {semester.pending_nomination && (
-        <div style={{
-          background: '#fffbeb', border: '1.5px solid #fde68a', borderRadius: '10px',
-          padding: '14px 20px', marginBottom: '24px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
-        }}>
-          <div>
-            <strong style={{ color: '#92400e', fontSize: '14px' }}>
-              {semester.pending_nomination.nomination_type === 'add_co_cr'
-                ? 'Co-CR invitation'
-                : 'CR role transfer offered'}
-            </strong>
-            <p style={{ margin: '2px 0 0', color: '#b45309', fontSize: '13px' }}>
-              <strong>{semester.pending_nomination.nominated_by}</strong>{' '}
-              {semester.pending_nomination.nomination_type === 'add_co_cr'
-                ? 'wants to appoint you as a co-CR. You will both have CR access.'
-                : 'wants to transfer the CR role to you. They will lose CR access.'}
-            </p>
-          </div>
-          <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
-            <button onClick={handleAcceptCr} style={{
-              background: '#667eea', color: 'white', border: 'none',
-              borderRadius: '6px', padding: '7px 16px', fontSize: '13px',
-              fontWeight: 600, cursor: 'pointer',
-            }}>Accept</button>
-            <button onClick={handleDeclineCr} style={{
-              background: 'var(--card-bg)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)',
-              borderRadius: '6px', padding: '7px 14px', fontSize: '13px',
-              fontWeight: 500, cursor: 'pointer',
-            }}>Decline</button>
-          </div>
-        </div>
-      )}
 
       {/* Two-column layout */}
       <div style={{ display: 'flex', gap: '30px', alignItems: 'flex-start' }}>
@@ -574,7 +454,7 @@ function SemesterDetail({ user }) {
 
           {/* Documents */}
           <div className="classrooms-section">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <h2 style={{ margin: 0 }}>Documents</h2>
               <label style={{
                 background: '#667eea', color: 'white', borderRadius: '8px',
@@ -585,13 +465,25 @@ function SemesterDetail({ user }) {
                 <input type="file" onChange={handleDocUpload} style={{ display: 'none' }} disabled={uploading} />
               </label>
             </div>
+            <input
+              type="text"
+              value={docSearch}
+              onChange={e => setDocSearch(e.target.value)}
+              placeholder="Search documents…"
+              style={{
+                width: '100%', boxSizing: 'border-box', marginBottom: '12px',
+                padding: '7px 12px', fontSize: '13px', borderRadius: '7px',
+                border: '1px solid var(--border-color)', background: 'var(--bg-color)',
+                color: 'var(--text-primary)', outline: 'none',
+              }}
+            />
             {docsLoading ? (
               <p style={{ color: '#999' }}>Loading documents...</p>
             ) : documents.length === 0 ? (
               <p style={{ color: '#999', fontSize: '14px' }}>No documents yet.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {documents.map(doc => (
+                {documents.filter(doc => doc.filename.toLowerCase().includes(docSearch.trim().toLowerCase())).map(doc => (
                   <div key={doc.id} style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     padding: '10px 14px', background: 'var(--bg-color)', borderRadius: '8px',
@@ -644,8 +536,8 @@ function SemesterDetail({ user }) {
                         }}>+ Calendar</button>
                         {isCr && (
                           <button onClick={() => handleDeleteSchedule(req.id)} style={{
-                            background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca',
-                            borderRadius: '6px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer',
+                            background: '#dc2626', color: 'white', border: 'none',
+                            borderRadius: '6px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
                           }}>Delete</button>
                         )}
                       </div>
@@ -661,12 +553,12 @@ function SemesterDetail({ user }) {
         {/* Right column: Todos + Announcements */}
         <div style={{
           width: '320px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '20px',
-          position: 'sticky', top: '20px',
-          maxHeight: 'calc(100vh - 40px)', overflowY: 'auto',
+          position: 'sticky', top: '20px', alignSelf: 'flex-start',
         }}>
         <div style={{
           background: 'var(--card-bg)', borderRadius: '12px',
           border: '1.5px solid var(--border-color)', padding: '20px',
+          display: 'flex', flexDirection: 'column', maxHeight: '480px',
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
             <h2 style={{ margin: 0, fontSize: '18px' }}>To-Do</h2>
@@ -694,25 +586,38 @@ function SemesterDetail({ user }) {
                   opacity: (!newTodoText.trim() || todoLoading) ? 0.5 : 1,
                 }}>+</button>
               </div>
-              {subjects.length > 0 && (
-                <select
-                  value={newTodoSubjectId}
-                  onChange={e => setNewTodoSubjectId(e.target.value)}
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {subjects.length > 0 && (
+                  <select
+                    value={newTodoSubjectId}
+                    onChange={e => setNewTodoSubjectId(e.target.value)}
+                    disabled={todoLoading}
+                    style={{
+                      flex: 1, padding: '6px 10px', border: '1.5px solid var(--border-color)',
+                      borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit',
+                      outline: 'none', background: 'var(--card-bg)', color: 'var(--text-primary)',
+                    }}
+                  >
+                    <option value="">No subject</option>
+                    {subjects.map(s => (
+                      <option key={s.id} value={s.id}>{s.code ? `${s.code} — ` : ''}{s.name}</option>
+                    ))}
+                  </select>
+                )}
+                <input
+                  type="date"
+                  value={newTodoDueDate}
+                  onChange={e => setNewTodoDueDate(e.target.value)}
                   disabled={todoLoading}
+                  title="Due date (optional)"
                   style={{
-                    width: '100%', padding: '6px 10px', border: '1.5px solid var(--border-color)',
-                    borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit',
+                    padding: '6px 8px', border: '1.5px solid var(--border-color)',
+                    borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit',
                     outline: 'none', background: 'var(--card-bg)', color: 'var(--text-primary)',
+                    width: subjects.length > 0 ? '130px' : '100%',
                   }}
-                >
-                  <option value="">No subject</option>
-                  {subjects.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.code ? `${s.code} — ` : ''}{s.name}
-                    </option>
-                  ))}
-                </select>
-              )}
+                />
+              </div>
             </form>
           )}
 
@@ -754,32 +659,47 @@ function SemesterDetail({ user }) {
               {todoFilterSubjectId ? 'No tasks for this subject.' : 'No tasks yet.'}
             </p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              {filtered.map(todo => (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '2px' }}>
+              {filtered.map(todo => {
+                const isOverdue = !todo.completed && todo.due_date && new Date(todo.due_date) < new Date();
+                return (
                 <div key={todo.id} style={{
                   display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px 12px',
-                  borderRadius: '8px', background: todo.completed ? 'rgba(16,185,129,0.08)' : 'var(--bg-color)',
-                  border: '1px solid', borderColor: todo.completed ? 'rgba(16,185,129,0.3)' : 'var(--border-color)',
+                  borderRadius: '8px',
+                  background: todo.completed ? 'rgba(16,185,129,0.08)' : isOverdue ? 'rgba(220,38,38,0.05)' : 'var(--bg-color)',
+                  border: '1px solid', borderColor: todo.completed ? 'rgba(16,185,129,0.3)' : isOverdue ? 'rgba(220,38,38,0.3)' : 'var(--border-color)',
                 }}>
                   <input type="checkbox" checked={todo.completed} onChange={() => handleToggleTodo(todo.id)}
                     style={{ marginTop: '3px', cursor: 'pointer', width: '16px', height: '16px', accentColor: '#667eea', flexShrink: 0 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    {todo.subject_id && (() => {
-                      const sub = subjects.find(s => s.id === todo.subject_id);
-                      return sub ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '2px' }}>
+                      {todo.subject_id && (() => {
+                        const sub = subjects.find(s => s.id === todo.subject_id);
+                        return sub ? (
+                          <span style={{
+                            fontSize: '11px', fontWeight: 600,
+                            background: 'rgba(102,126,234,0.15)', color: '#667eea',
+                            padding: '1px 8px', borderRadius: '10px',
+                          }}>
+                            {sub.code || sub.name}
+                          </span>
+                        ) : null;
+                      })()}
+                      {todo.due_date && (
                         <span style={{
-                          display: 'inline-block', fontSize: '11px', fontWeight: 600,
-                          background: 'rgba(102,126,234,0.15)', color: '#667eea',
-                          padding: '1px 8px', borderRadius: '10px', marginBottom: '3px',
+                          fontSize: '11px', fontWeight: 600,
+                          background: isOverdue ? 'rgba(220,38,38,0.12)' : 'rgba(0,0,0,0.06)',
+                          color: isOverdue ? '#dc2626' : 'var(--text-secondary)',
+                          padding: '1px 8px', borderRadius: '10px',
                         }}>
-                          {sub.code || sub.name}
+                          {isOverdue ? 'Overdue · ' : 'Due · '}{new Date(todo.due_date + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                         </span>
-                      ) : null;
-                    })()}
+                      )}
+                    </div>
                     <p style={{
                       margin: 0, fontSize: '14px', lineHeight: '1.4',
                       textDecoration: todo.completed ? 'line-through' : 'none',
-                      color: todo.completed ? '#999' : 'var(--text-primary)', wordBreak: 'break-word',
+                      color: todo.completed ? '#999' : isOverdue ? '#dc2626' : 'var(--text-primary)', wordBreak: 'break-word',
                     }}>{todo.text}</p>
                   </div>
                   <button onClick={() => handleDeleteTodo(todo.id)} style={{
@@ -787,7 +707,8 @@ function SemesterDetail({ user }) {
                     cursor: 'pointer', fontSize: '16px', padding: '0 2px', lineHeight: 1, flexShrink: 0,
                   }}>&times;</button>
                 </div>
-              ))}
+              );
+              })}
             </div>
           );
           })()}
@@ -798,6 +719,7 @@ function SemesterDetail({ user }) {
           <div style={{
             background: 'var(--card-bg)', borderRadius: '12px',
             border: '1.5px solid var(--border-color)', padding: '20px',
+            display: 'flex', flexDirection: 'column', maxHeight: '300px',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
               <h2 style={{ margin: 0, fontSize: '17px' }}>Links</h2>
@@ -839,14 +761,14 @@ function SemesterDetail({ user }) {
               <p style={{ color: 'var(--text-secondary)', fontSize: '13px', textAlign: 'center', margin: '8px 0' }}>No links added yet.</p>
             )}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '2px' }}>
               {links.map(link => (
                 <div key={link.id} style={{
                   display: 'flex', alignItems: 'center', gap: '8px',
                   padding: '8px 10px', borderRadius: '8px',
                   background: 'var(--bg-color)', border: '1px solid var(--border-color)',
                 }}>
-                  <span style={{ fontSize: '14px', flexShrink: 0 }}>🔗</span>
+                  <LinkIcon size={14} strokeWidth={1.75} style={{ flexShrink: 0, color: '#667eea' }} />
                   <a href={link.url} target="_blank" rel="noopener noreferrer" style={{
                     flex: 1, color: '#667eea', fontSize: '13px', fontWeight: 500,
                     textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -867,6 +789,7 @@ function SemesterDetail({ user }) {
         <div style={{
           background: 'var(--card-bg)', borderRadius: '12px',
           border: '1.5px solid var(--border-color)', padding: '20px',
+          display: 'flex', flexDirection: 'column', maxHeight: '420px',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
             <h2 style={{ margin: 0, fontSize: '17px' }}>Announcements</h2>
@@ -912,7 +835,7 @@ function SemesterDetail({ user }) {
               No announcements yet.
             </p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '2px' }}>
               {announcements.map(ann => (
                 <div key={ann.id} style={{
                   background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: '8px',
@@ -940,85 +863,6 @@ function SemesterDetail({ user }) {
 
         </div>{/* end right column */}
       </div>
-
-      {/* Add Co-CR Modal */}
-      {showAddCrModal && (
-        <div className="modal-overlay" onClick={() => setShowAddCrModal(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '420px' }}>
-            <h2>Add Co-CR</h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
-              Appoint another member as CR. They will have full CR access. <strong>You keep your own CR role.</strong>
-            </p>
-            <form onSubmit={handleAddCoCr}>
-              <div className="form-group">
-                <label>Select Member *</label>
-                <select
-                  value={addCrTargetId}
-                  onChange={e => setAddCrTargetId(e.target.value)}
-                  required
-                  disabled={addCrLoading}
-                  style={{ width: '100%', padding: '12px 15px', border: '1.5px solid var(--border-color)', borderRadius: '6px', fontSize: '15px', fontFamily: 'inherit', background: 'var(--bg-color)', color: 'var(--text-primary)' }}
-                >
-                  <option value="">— select a member —</option>
-                  {(classroom?.members || [])
-                    .filter(m => !(semester.cr_ids || []).includes(m.id))
-                    .map(m => (
-                      <option key={m.id} value={m.id}>
-                        {m.fullName || m.username} ({m.username})
-                      </option>
-                    ))}
-                </select>
-              </div>
-              <div className="modal-buttons">
-                <button type="button" onClick={() => setShowAddCrModal(false)} disabled={addCrLoading}>Cancel</button>
-                <button type="submit" disabled={addCrLoading || !addCrTargetId} style={{ background: '#667eea', color: 'white' }}>
-                  {addCrLoading ? 'Adding...' : 'Add as Co-CR'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Transfer CR Role Modal */}
-      {showTransferModal && (
-        <div className="modal-overlay" onClick={() => setShowTransferModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '420px' }}>
-            <h2>Transfer CR Role</h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '20px' }}>
-              Select a member to nominate. They must accept before the role transfers.
-              You will lose CR access once they accept.
-            </p>
-            <form onSubmit={handleNominateCr}>
-              <div className="form-group">
-                <label>Nominate a Member *</label>
-                <select
-                  value={transferNomineeId}
-                  onChange={(e) => setTransferNomineeId(e.target.value)}
-                  required
-                  disabled={transferLoading}
-                  style={{ width: '100%', padding: '12px 15px', border: '1.5px solid var(--border-color)', borderRadius: '6px', fontSize: '15px', fontFamily: 'inherit', background: 'var(--bg-color)', color: 'var(--text-primary)' }}
-                >
-                  <option value="">— select a member —</option>
-                  {(classroom?.members || [])
-                    .filter(m => !semester.cr_ids.includes(m.id))
-                    .map(m => (
-                      <option key={m.id} value={m.id}>
-                        {m.fullName || m.username} ({m.username})
-                      </option>
-                    ))}
-                </select>
-              </div>
-              <div className="modal-buttons">
-                <button type="button" onClick={() => setShowTransferModal(false)} disabled={transferLoading}>Cancel</button>
-                <button type="submit" disabled={transferLoading || !transferNomineeId} style={{ background: '#f59e0b', color: 'white' }}>
-                  {transferLoading ? 'Sending...' : 'Send Nomination'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* Post Schedule Modal */}
       {showPostScheduleModal && (
@@ -1096,7 +940,7 @@ function SemesterDetail({ user }) {
       {confirmDeleteSubject && (
         <div className="modal-overlay" onClick={() => setConfirmDeleteSubject(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '380px', textAlign: 'center' }}>
-            <div style={{ fontSize: '32px', marginBottom: '12px' }}>🗑️</div>
+            <div style={{ fontSize: '32px', marginBottom: '12px', display: 'flex', justifyContent: 'center' }}><Trash2 size={32} strokeWidth={1.75} color="#dc2626" /></div>
             <h2 style={{ margin: '0 0 8px' }}>Delete subject?</h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: '14px', margin: '0 0 20px' }}>
               "<strong>{confirmDeleteSubject.name}</strong>" and all its associated files will be permanently removed.
@@ -1140,11 +984,33 @@ function SemesterDetail({ user }) {
         </div>
       )}
 
+      {/* Confirm Delete Semester Modal */}
+      {confirmDeleteSemester && (
+        <div className="modal-overlay" onClick={() => setConfirmDeleteSemester(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px', textAlign: 'center' }}>
+            <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'center' }}><Trash2 size={36} strokeWidth={1.75} color="#dc2626" /></div>
+            <h2 style={{ margin: '0 0 8px' }}>Delete this semester?</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', margin: '0 0 6px' }}>
+              <strong>{semester.name}</strong> and all its subjects, files, and todos will be permanently removed.
+            </p>
+            <p style={{ color: '#dc2626', fontSize: '13px', margin: '0 0 24px', fontWeight: 500 }}>
+              This cannot be undone.
+            </p>
+            <div className="modal-buttons" style={{ justifyContent: 'center' }}>
+              <button type="button" onClick={() => setConfirmDeleteSemester(false)} disabled={deleteSemesterLoading}>Cancel</button>
+              <button type="button" onClick={handleDeleteSemester} disabled={deleteSemesterLoading} style={{ background: '#dc2626', color: 'white' }}>
+                {deleteSemesterLoading ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Confirm Delete Announcement Modal */}
       {confirmDeleteAnnouncement && (
         <div className="modal-overlay" onClick={() => setConfirmDeleteAnnouncement(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '380px', textAlign: 'center' }}>
-            <div style={{ fontSize: '32px', marginBottom: '12px' }}>🗑️</div>
+            <div style={{ fontSize: '32px', marginBottom: '12px', display: 'flex', justifyContent: 'center' }}><Trash2 size={32} strokeWidth={1.75} color="#dc2626" /></div>
             <h2 style={{ margin: '0 0 8px' }}>Delete announcement?</h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: '14px', margin: '0 0 12px' }}>
               This cannot be undone.

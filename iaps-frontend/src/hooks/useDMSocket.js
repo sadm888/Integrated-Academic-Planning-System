@@ -34,8 +34,10 @@ export function useDMSocket(classroomId, withUserId, handlers = {}) {
     socket.on('disconnect', () => setConnected(false));
     socket.on('connect_error', () => setConnected(false));
 
-    socket.on('dm_message', (msg) => handlersRef.current.onMessage?.(msg));
-    socket.on('dm_message_deleted', (data) => handlersRef.current.onDeleted?.(data));
+    socket.on('dm_message',            (msg)  => handlersRef.current.onMessage?.(msg));
+    socket.on('dm_message_deleted',    (data) => handlersRef.current.onDeleted?.(data));
+    socket.on('dm_message_tombstoned', (data) => handlersRef.current.onTombstoned?.(data));
+    socket.on('dm_read',               (data) => handlersRef.current.onRead?.(data));
 
     return () => {
       socket.disconnect();
