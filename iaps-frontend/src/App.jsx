@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AlertTriangle, Tag, Image as ImageIcon, MessageSquare } from 'lucide-react';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
@@ -15,6 +15,20 @@ import Navbar from './components/Navbar';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { settingsAPI, chatAPI, dmAPI } from './services/api';
+
+function RouteTitle() {
+  const loc = useLocation();
+  useEffect(() => {
+    if (loc.pathname.includes('/chat')) { document.title = 'Chat · IAPS'; return; }
+    if (loc.pathname.includes('/files')) { document.title = 'Files · IAPS'; return; }
+    if (loc.pathname.match(/\/semester\/\d+$/)) { document.title = 'Semester · IAPS'; return; }
+    if (loc.pathname.includes('/classroom/')) { document.title = 'Classroom · IAPS'; return; }
+    const map = { '/classrooms': 'Classrooms', '/calendar': 'Calendar', '/settings': 'Settings', '/login': 'Login', '/signup': 'Sign Up' };
+    const key = Object.keys(map).find(k => loc.pathname.startsWith(k));
+    document.title = key ? `${map[key]} · IAPS` : 'IAPS';
+  }, [loc]);
+  return null;
+}
 
 function App() {
   const [user, setUser] = useState(null);
@@ -335,6 +349,7 @@ function App() {
     })()}
 
     <Router>
+      <RouteTitle />
       {user && <Navbar user={user} onLogout={handleLogout} dmUnreadCount={dmUnreadCount} />}
       <Routes>
         <Route

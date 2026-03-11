@@ -53,6 +53,16 @@ function ClassroomDetail({ user, onDmRead }) {
 
   useEffect(() => { loadClassroomData(); }, [classroomId]);
 
+  useEffect(() => {
+    const onKey = e => {
+      if (e.key !== 'Escape') return;
+      setShowCreateSemester(false); setRemovePhotoTarget(null); setFlagNameTarget(null);
+      setFullscreenPhoto(null); setDmTarget(null); setRemoveMemberTarget(null); setShowLeaveModal(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // Persistent socket for personal notifications (CR nominations, etc.)
   useEffect(() => {
     const token = localStorage.getItem('token');

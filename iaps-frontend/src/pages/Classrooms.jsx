@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { classroomAPI } from '../services/api';
 import '../styles/Classroom.css';
+import { Users } from 'lucide-react';
 
 function Classrooms({ user }) {
   const navigate = useNavigate();
@@ -22,9 +23,17 @@ function Classrooms({ user }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [fetchLoading, setFetchLoading] = useState(true);
+
+  useEffect(() => { fetchClassrooms(); }, []);
 
   useEffect(() => {
-    fetchClassrooms();
+    const onKey = e => {
+      if (e.key !== 'Escape') return;
+      setShowCreateModal(false); setShowJoinModal(false); setDeleteTarget(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   const fetchClassrooms = async () => {
@@ -33,6 +42,8 @@ function Classrooms({ user }) {
       setClassrooms(res.data.classrooms || []);
     } catch (err) {
       console.error('Failed to fetch classrooms:', err);
+    } finally {
+      setFetchLoading(false);
     }
   };
 
@@ -136,15 +147,20 @@ function Classrooms({ user }) {
 
       <div className="classrooms-section">
         <div className="classrooms-grid">
-          {classrooms.length > 0 ? (
+          {fetchLoading ? (
+            <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '60px 20px', color: 'var(--text-secondary)', fontSize: '14px' }}>
+              Loading classrooms…
+            </div>
+          ) : classrooms.length > 0 ? (
             classrooms.map(classroom => (
-              <ClassroomCard
-                key={classroom.id}
-                classroom={classroom}
-              />
+              <ClassroomCard key={classroom.id} classroom={classroom} />
             ))
           ) : (
-            <p className="no-classrooms">No classrooms yet. Create one or join using a code!</p>
+            <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '60px 20px' }}>
+              <Users size={48} strokeWidth={1} style={{ color: 'var(--text-secondary)', marginBottom: '16px', display: 'block', margin: '0 auto 16px' }} />
+              <h3 style={{ margin: '0 0 8px', color: 'var(--text-primary)', fontSize: '17px', fontWeight: 600 }}>No classrooms yet</h3>
+              <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '14px' }}>Create one or ask your CR for a join code.</p>
+            </div>
           )}
         </div>
       </div>

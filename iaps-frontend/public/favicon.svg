@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="7" fill="#667eea"/>
+  <!-- Cap brim (diamond shape) -->
+  <polygon points="16,5 30,11.5 16,18 2,11.5" fill="white"/>
+  <!-- Cap body -->
+  <path d="M10,14.5 L10,21.5 Q16,25 22,21.5 L22,14.5 L16,18 Z" fill="rgba(255,255,255,0.85)"/>
+  <!-- Tassel string -->
+  <line x1="30" y1="11.5" x2="30" y2="20" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <!-- Tassel end -->
+  <circle cx="30" cy="21.5" r="2" fill="white"/>
+</svg>
