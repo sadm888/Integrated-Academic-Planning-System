@@ -6,7 +6,7 @@ import FilePickerModal from '../components/FilePickerModal';
 import { sizeLabel, FileTypeIcon } from '../utils/fileUtils';
 import {
   Calendar, ClipboardList, GraduationCap, BookMarked, Folder,
-  Lock, Unlock, Eye, EyeOff, MessageSquare, Check,
+  Lock, Unlock, Eye, EyeOff, MessageSquare, Check, X,
 } from 'lucide-react';
 
 const SECTION_ICON_MAP = {
@@ -133,7 +133,7 @@ function FileRow({ resource, onDelete, onDragStart, canDelete, isCr, semesterId,
           }}
           onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
           onMouseLeave={e => e.currentTarget.style.background = 'none'}
-        >×</button>
+        ><X size={14} strokeWidth={2} /></button>
       )}
     </div>
   );
@@ -775,7 +775,7 @@ function Academics({ user }) {
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '14px', padding: '4px 5px', borderRadius: '4px', flexShrink: 0 }}
                         onMouseEnter={e => { e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.background = '#fef2f2'; }}
                         onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-secondary)'; e.currentTarget.style.background = 'none'; }}
-                      >×</button>
+                      ><X size={13} strokeWidth={2} /></button>
                     )}
                   </div>
                 ))
@@ -851,12 +851,15 @@ function Academics({ user }) {
                           <button
                             onClick={() => !hiddenFromMe && setActiveSectionId(sec.id)}
                             style={{
-                              flex: 1, textAlign: 'left', padding: '9px 10px',
-                              borderRadius: '8px', border: 'none',
+                              flex: 1, textAlign: 'left',
+                              padding: activeSectionId === sec.id ? '9px 10px 9px 8px' : '9px 10px',
+                              borderRadius: activeSectionId === sec.id ? '0 8px 8px 0' : '8px',
+                              border: 'none',
+                              borderLeft: activeSectionId === sec.id ? '3px solid #667eea' : '3px solid transparent',
                               cursor: hiddenFromMe ? 'default' : 'pointer',
                               fontSize: '13px',
                               fontWeight: activeSectionId === sec.id ? 700 : 400,
-                              background: activeSectionId === sec.id ? 'rgba(102,126,234,0.12)' : 'transparent',
+                              background: activeSectionId === sec.id ? 'rgba(102,126,234,0.1)' : 'transparent',
                               color: hiddenFromMe ? 'var(--text-secondary)' : (activeSectionId === sec.id ? '#667eea' : 'var(--text-primary)'),
                               display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden',
                               opacity: hiddenFromMe ? 0.5 : 1,
@@ -883,8 +886,8 @@ function Academics({ user }) {
                             <button
                               onClick={() => handleDeleteSection(sec.id)}
                               title="Delete section"
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '13px', padding: '4px', borderRadius: '4px', flexShrink: 0 }}
-                            >×</button>
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '4px', borderRadius: '4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}
+                            ><X size={13} strokeWidth={2} /></button>
                           )}
 
                           {/* Lock/unlock own custom sections (non-CR, non-owner) */}
@@ -920,7 +923,7 @@ function Academics({ user }) {
                   />
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <button type="submit" disabled={sectionLoading} style={{ flex: 1, padding: '6px', background: '#667eea', color: 'white', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>Add</button>
-                    <button type="button" onClick={() => { setShowAddSection(false); setNewSectionName(''); }} style={{ padding: '6px 10px', background: 'none', border: '1px solid var(--border-color)', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', color: 'var(--text-primary)' }}>×</button>
+                    <button type="button" onClick={() => { setShowAddSection(false); setNewSectionName(''); }} style={{ padding: '6px 10px', background: 'none', border: '1px solid var(--border-color)', borderRadius: '6px', cursor: 'pointer', color: 'var(--text-primary)', display: 'flex', alignItems: 'center' }}><X size={13} strokeWidth={2} /></button>
                   </div>
                 </form>
               ) : (
@@ -1038,8 +1041,8 @@ function Academics({ user }) {
                         }}
                       ><Folder size={11} strokeWidth={1.75} style={{ verticalAlign: 'middle', marginRight: '3px' }} />{f.name}</button>
                       <button onClick={() => handleDeleteFolder(f.id)} style={{
-                        background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '12px', padding: '2px 4px',
-                      }}>×</button>
+                        background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '2px 4px', display: 'flex', alignItems: 'center',
+                      }}><X size={12} strokeWidth={2} /></button>
                     </div>
                   ))}
                   {/* Add folder button (any member) */}
@@ -1061,7 +1064,7 @@ function Academics({ user }) {
                         }}
                       />
                       <button type="submit" disabled={folderLoading} style={{ padding: '4px 10px', background: '#667eea', color: 'white', border: 'none', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}>Add</button>
-                      <button type="button" onClick={() => { setShowAddFolder(false); setNewFolderName(''); }} style={{ padding: '4px 8px', background: 'none', border: '1px solid var(--border-color)', borderRadius: '6px', fontSize: '12px', cursor: 'pointer', color: 'var(--text-primary)' }}>×</button>
+                      <button type="button" onClick={() => { setShowAddFolder(false); setNewFolderName(''); }} style={{ padding: '4px 8px', background: 'none', border: '1px solid var(--border-color)', borderRadius: '6px', cursor: 'pointer', color: 'var(--text-primary)', display: 'flex', alignItems: 'center' }}><X size={12} strokeWidth={2} /></button>
                     </form>
                   )}
               </div>
@@ -1201,9 +1204,9 @@ function Academics({ user }) {
                     onClick={() => handleDeleteTodo(todo.id)}
                     style={{
                       background: 'none', border: 'none', color: '#ccc',
-                      cursor: 'pointer', fontSize: '15px', padding: '0', lineHeight: 1, flexShrink: 0,
+                      cursor: 'pointer', padding: '0', lineHeight: 1, flexShrink: 0, display: 'flex',
                     }}
-                  >&times;</button>
+                  ><X size={15} strokeWidth={2} /></button>
                 </div>
               ))}
             </div>

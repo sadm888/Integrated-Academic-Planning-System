@@ -44,6 +44,7 @@ export function useSocket(semesterId, handlers = {}) {
     socket.on('warn_notification',  (data) => handlersRef.current.onWarn?.(data));
     socket.on('message_pinned',     (data) => handlersRef.current.onPinned?.(data));
     socket.on('message_unpinned',   (data) => handlersRef.current.onUnpinned?.(data));
+    socket.on('member_removed',     (data) => handlersRef.current.onMemberRemoved?.(data));
 
     return () => {
       socket.disconnect();

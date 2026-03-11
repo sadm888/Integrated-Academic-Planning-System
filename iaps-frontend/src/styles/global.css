@@ -143,3 +143,28 @@ body {
   margin-bottom: 1rem;
   font-size: 0.875rem;
 }
+
+/* ── Global polish ──────────────────────────────────────────────────────── */
+
+/* Subtle transitions on all interactive elements */
+button, a, select, input[type="checkbox"] {
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s, opacity 0.15s, transform 0.1s;
+}
+
+/* Tactile press feedback */
+button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+/* Heading letter-spacing for a more crafted feel */
+h1, h2, h3 {
+  letter-spacing: -0.01em;
+}
+
+h1 { letter-spacing: -0.02em; }
+
+/* Consistent scrollbar styling */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }

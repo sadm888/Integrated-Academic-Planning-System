@@ -4,7 +4,9 @@ import { settingsAPI } from '../services/api';
 const COLORS = ['#667eea', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
 
 function Avatar({ user, size = 36 }) {
-  const colorIdx = ((user?.username || '').charCodeAt(0) || 0) % COLORS.length;
+  const str = user?.username || user?.email || '';
+  const hash = str.split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0);
+  const colorIdx = Math.abs(hash) % COLORS.length;
   const letter = ((user?.username || user?.email || '?')[0] || '?').toUpperCase();
 
   if (user?.profile_picture) {

@@ -53,7 +53,7 @@ export const classroomAPI = {
   leave: (classroomId) => api.post(`/classroom/${classroomId}/leave`),
   list: () => api.get('/classroom/list'),
   getDetails: (classroomId) => api.get(`/classroom/${classroomId}`),
-  removeMember: (classroomId, userId) => api.post(`/classroom/${classroomId}/remove-member`, { user_id: userId }),
+  removeMember: (classroomId, userId, reason = '') => api.post(`/classroom/${classroomId}/remove-member`, { user_id: userId, reason }),
   removeMemberAvatar: (classroomId, userId, reason) => api.post(`/classroom/${classroomId}/remove-member-avatar`, { user_id: userId, reason }),
   flagMemberName: (classroomId, userId, reason) => api.post(`/classroom/${classroomId}/flag-member-name`, { user_id: userId, reason }),
   delete: (classroomId) => api.delete(`/classroom/${classroomId}`),

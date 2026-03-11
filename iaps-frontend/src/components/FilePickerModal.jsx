@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { academicAPI, chatAPI, documentAPI, BACKEND_URL } from '../services/api';
 import { sizeLabel, FileTypeIcon } from '../utils/fileUtils';
-import { Trash2, FileText, MessageSquare } from 'lucide-react';
+import { Trash2, FileText, MessageSquare, X } from 'lucide-react';
 
 function getResourceUrl(r) {
   const token = localStorage.getItem('token') || '';
@@ -172,7 +172,7 @@ export default function FilePickerModal({ onSelect, onClose, user }) {
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text-primary)' }}>Pick from Files</div>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer', color: 'var(--text-secondary)', lineHeight: 1, padding: '2px 6px' }}>×</button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center' }}><X size={18} strokeWidth={2} /></button>
         </div>
 
         {/* Search */}

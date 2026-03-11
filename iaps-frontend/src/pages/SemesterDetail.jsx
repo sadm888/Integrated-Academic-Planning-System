@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { semesterAPI, subjectAPI, documentAPI, todoAPI, scheduleAPI, classroomAPI, announcementAPI, linksAPI } from '../services/api';
+import { semesterAPI, subjectAPI, documentAPI, todoAPI, scheduleAPI, classroomAPI, announcementAPI, linksAPI, BACKEND_URL } from '../services/api';
 import '../styles/Classroom.css';
-import { Link as LinkIcon, Trash2 } from 'lucide-react';
-
-const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import { Link as LinkIcon, Trash2, X, FileText, CalendarDays, Megaphone } from 'lucide-react';
 
 function SemesterDetail({ user }) {
   const { classroomId, semesterId } = useParams();
@@ -480,9 +478,13 @@ function SemesterDetail({ user }) {
             {docsLoading ? (
               <p style={{ color: '#999' }}>Loading documents...</p>
             ) : documents.length === 0 ? (
-              <p style={{ color: '#999', fontSize: '14px' }}>No documents yet.</p>
+              <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-secondary)' }}>
+                <FileText size={28} strokeWidth={1.25} style={{ marginBottom: '8px', opacity: 0.4 }} />
+                <p style={{ fontSize: '14px', margin: 0 }}>No documents yet.</p>
+                <p style={{ fontSize: '12px', margin: '4px 0 0', opacity: 0.7 }}>Upload your first file above.</p>
+              </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '320px', overflowY: 'auto', paddingRight: '2px' }}>
                 {documents.filter(doc => doc.filename.toLowerCase().includes(docSearch.trim().toLowerCase())).map(doc => (
                   <div key={doc.id} style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -501,8 +503,8 @@ function SemesterDetail({ user }) {
                     {(isCr || doc.uploaded_by?.id === user?.id) && (
                       <button onClick={() => handleDeleteDoc(doc.id)} style={{
                         background: 'none', border: 'none', color: '#dc2626',
-                        cursor: 'pointer', fontSize: '18px', padding: '0 4px', marginLeft: '8px',
-                      }}>&times;</button>
+                        cursor: 'pointer', padding: '2px', marginLeft: '8px', display: 'flex', alignItems: 'center',
+                      }}><X size={15} strokeWidth={2} /></button>
                     )}
                   </div>
                 ))}
@@ -514,9 +516,12 @@ function SemesterDetail({ user }) {
           <div className="classrooms-section">
             <h2>Schedules</h2>
             {scheduleRequests.length === 0 ? (
-              <p style={{ color: '#999', fontSize: '14px' }}>No schedules posted yet.</p>
+              <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-secondary)' }}>
+                <CalendarDays size={28} strokeWidth={1.25} style={{ marginBottom: '8px', opacity: 0.4 }} />
+                <p style={{ fontSize: '14px', margin: 0 }}>No schedules posted yet.</p>
+              </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '420px', overflowY: 'auto', paddingRight: '2px' }}>
                 {scheduleRequests.map(req => (
                   <div key={req.id} style={{
                     background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px',
@@ -558,7 +563,7 @@ function SemesterDetail({ user }) {
         <div style={{
           background: 'var(--card-bg)', borderRadius: '12px',
           border: '1.5px solid var(--border-color)', padding: '20px',
-          display: 'flex', flexDirection: 'column', maxHeight: '480px',
+          display: 'flex', flexDirection: 'column', maxHeight: '480px', overflow: 'hidden',
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
             <h2 style={{ margin: 0, fontSize: '18px' }}>To-Do</h2>
@@ -593,7 +598,7 @@ function SemesterDetail({ user }) {
                     onChange={e => setNewTodoSubjectId(e.target.value)}
                     disabled={todoLoading}
                     style={{
-                      flex: 1, padding: '6px 10px', border: '1.5px solid var(--border-color)',
+                      flex: 1, minWidth: 0, padding: '6px 8px', border: '1.5px solid var(--border-color)',
                       borderRadius: '6px', fontSize: '13px', fontFamily: 'inherit',
                       outline: 'none', background: 'var(--card-bg)', color: 'var(--text-primary)',
                     }}
@@ -614,7 +619,7 @@ function SemesterDetail({ user }) {
                     padding: '6px 8px', border: '1.5px solid var(--border-color)',
                     borderRadius: '6px', fontSize: '12px', fontFamily: 'inherit',
                     outline: 'none', background: 'var(--card-bg)', color: 'var(--text-primary)',
-                    width: subjects.length > 0 ? '130px' : '100%',
+                    width: subjects.length > 0 ? '130px' : '100%', flexShrink: 0,
                   }}
                 />
               </div>
@@ -704,8 +709,8 @@ function SemesterDetail({ user }) {
                   </div>
                   <button onClick={() => handleDeleteTodo(todo.id)} style={{
                     background: 'none', border: 'none', color: '#ccc',
-                    cursor: 'pointer', fontSize: '16px', padding: '0 2px', lineHeight: 1, flexShrink: 0,
-                  }}>&times;</button>
+                    cursor: 'pointer', padding: '2px', flexShrink: 0, display: 'flex', alignItems: 'center',
+                  }}><X size={13} strokeWidth={2} /></button>
                 </div>
               );
               })}
@@ -776,8 +781,8 @@ function SemesterDetail({ user }) {
                   {isCr && (
                     <button onClick={() => handleDeleteLink(link.id)} style={{
                       background: 'none', border: 'none', color: 'var(--text-secondary)',
-                      cursor: 'pointer', fontSize: '16px', padding: '0 2px', lineHeight: 1, flexShrink: 0,
-                    }}>&times;</button>
+                      cursor: 'pointer', padding: '2px', flexShrink: 0, display: 'flex', alignItems: 'center',
+                    }}><X size={13} strokeWidth={2} /></button>
                   )}
                 </div>
               ))}
@@ -831,15 +836,18 @@ function SemesterDetail({ user }) {
           )}
 
           {announcements.length === 0 ? (
-            <p style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px', margin: '16px 0' }}>
-              No announcements yet.
-            </p>
+            <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-secondary)' }}>
+              <Megaphone size={24} strokeWidth={1.25} style={{ marginBottom: '6px', opacity: 0.35 }} />
+              <p style={{ fontSize: '13px', margin: 0 }}>No announcements yet.</p>
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '2px' }}>
               {announcements.map(ann => (
                 <div key={ann.id} style={{
-                  background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: '8px',
-                  padding: '10px 12px',
+                  background: 'rgba(234,179,8,0.05)',
+                  borderLeft: '3px solid #f59e0b',
+                  borderRadius: '6px',
+                  padding: '10px 12px 10px 14px',
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
                     <p style={{ margin: 0, fontSize: '13px', lineHeight: '1.5', color: 'var(--text-primary)', flex: 1, wordBreak: 'break-word' }}>
@@ -848,8 +856,8 @@ function SemesterDetail({ user }) {
                     {isCr && (
                       <button onClick={() => handleDeleteAnnouncement(ann)} style={{
                         background: 'none', border: 'none', color: 'var(--text-secondary)',
-                        cursor: 'pointer', fontSize: '15px', padding: '0 2px', lineHeight: 1, flexShrink: 0,
-                      }}>&times;</button>
+                        cursor: 'pointer', padding: '2px', flexShrink: 0, display: 'flex', alignItems: 'center',
+                      }}><X size={13} strokeWidth={2} /></button>
                     )}
                   </div>
                   <p style={{ margin: '6px 0 0', fontSize: '11px', color: 'var(--text-secondary)' }}>
@@ -892,7 +900,7 @@ function SemesterDetail({ user }) {
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
                     <strong style={{ fontSize: '13px', color: '#4338ca' }}>Event {idx + 1}</strong>
                     {scheduleEvents.length > 1 && (
-                      <button type="button" onClick={() => removeScheduleEvent(idx)} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '18px', lineHeight: 1, padding: 0 }}>&times;</button>
+                      <button type="button" onClick={() => removeScheduleEvent(idx)} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}><X size={15} strokeWidth={2} /></button>
                     )}
                   </div>
                   <div className="form-group">

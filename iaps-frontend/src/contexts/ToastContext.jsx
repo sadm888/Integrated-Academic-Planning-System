@@ -34,10 +34,10 @@ function ToastItem({ toast, onDismiss }) {
         onClick={() => onDismiss(toast.id)}
         style={{
           background: 'none', border: 'none', cursor: 'pointer',
-          color: c.text, opacity: 0.6, fontSize: '16px', lineHeight: 1,
-          padding: '0 2px', flexShrink: 0,
+          color: c.text, opacity: 0.6,
+          padding: '0 2px', flexShrink: 0, display: 'flex', alignItems: 'center',
         }}
-      >×</button>
+      ><X size={14} strokeWidth={2} /></button>
     </div>
   );
 }

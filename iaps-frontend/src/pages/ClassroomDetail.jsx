@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { classroomAPI, semesterAPI, settingsAPI, dmAPI } from '../services/api';
+import { classroomAPI, semesterAPI, settingsAPI, dmAPI, BACKEND_URL } from '../services/api';
 import FilePickerModal from '../components/FilePickerModal';
 import { useDMSocket } from '../hooks/useDMSocket';
 import { io } from 'socket.io-client';
-import { BACKEND_URL } from '../services/api';
 import Avatar from '../components/Avatar';
 import '../styles/Classroom.css';
-import { Bell, MessageSquare, EyeOff, Check, Eye, Trash2, Paperclip, X, Clock, CheckCircle, XCircle } from 'lucide-react';
-import { FileTypeIcon } from '../utils/fileUtils';
+import { Bell, MessageSquare, EyeOff, Check, Eye, Trash2, Paperclip, X, Clock, CheckCircle, XCircle, Mail, Phone, UserX, Users, Crown, Shield } from 'lucide-react';
+import RemovedNotification from '../components/RemovedNotification';
+import { FileTypeIcon, sizeLabel } from '../utils/fileUtils';
+import { formatTime } from '../utils/timeUtils';
 
 function ClassroomDetail({ user, onDmRead }) {
   const { classroomId } = useParams();
@@ -43,6 +44,10 @@ function ClassroomDetail({ user, onDmRead }) {
   const [activity, setActivity] = useState(null); // { announcements, unread_chat, pending_requests }
   const [crNotifications, setCrNotifications] = useState([]);
   const [pendingNominations, setPendingNominations] = useState([]);
+  const [removeMemberTarget, setRemoveMemberTarget] = useState(null); // { id, name }
+  const [removeMemberReason, setRemoveMemberReason] = useState('');
+  const [removeMemberLoading, setRemoveMemberLoading] = useState(false);
+  const [removedNotification, setRemovedNotification] = useState(null); // { classroom_name, removed_by, reason }
   const dmBottomRef = useRef(null);
   const dmFileInputRef = useRef(null);
 
@@ -59,6 +64,9 @@ function ClassroomDetail({ user, onDmRead }) {
         .catch(() => {});
     });
     socket.on('cr_transfer_result', () => { loadClassroomData(); });
+    socket.on('member_removed', (data) => {
+      if (data.classroom_id === classroomId) setRemovedNotification(data);
+    });
     return () => socket.disconnect();
   }, [classroomId]);
 
@@ -221,15 +229,25 @@ function ClassroomDetail({ user, onDmRead }) {
     }
   };
 
-  const handleRemoveMember = async (memberId) => {
-    if (!window.confirm('Remove this member?')) return;
+  const handleRemoveMember = (memberId, memberName) => {
+    setRemoveMemberTarget({ id: memberId, name: memberName });
+    setRemoveMemberReason('');
+  };
+
+  const handleConfirmRemoveMember = async () => {
+    if (!removeMemberTarget) return;
+    setRemoveMemberLoading(true);
     setError('');
     try {
-      await classroomAPI.removeMember(classroomId, memberId);
+      await classroomAPI.removeMember(classroomId, removeMemberTarget.id, removeMemberReason.trim());
       setSuccess('Member removed.');
+      setRemoveMemberTarget(null);
+      setRemoveMemberReason('');
       loadClassroomData();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to remove member');
+    } finally {
+      setRemoveMemberLoading(false);
     }
   };
 
@@ -554,7 +572,7 @@ function ClassroomDetail({ user, onDmRead }) {
           </p>
           <button onClick={() => setCrNotifications(prev => prev.filter(n => n.id !== note.id))} style={{
             background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '16px', flexShrink: 0,
-          }}>&times;</button>
+          }}><X size={14} strokeWidth={2} /></button>
         </div>
       ))}
 
@@ -659,7 +677,10 @@ function ClassroomDetail({ user, onDmRead }) {
       {/* Members */}
       {classroom.members && classroom.members.length > 0 && (
         <div className="classrooms-section">
-          <h2>Members ({classroom.members.length})</h2>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Users size={18} strokeWidth={2} style={{ color: 'var(--text-secondary)' }} />
+            Members ({classroom.members.length})
+          </h2>
           <div className="classrooms-grid">
             {classroom.members.map(member => {
               const isMemberCr = activeSemester && activeSemester.cr_ids?.includes(member.id);
@@ -700,21 +721,29 @@ function ClassroomDetail({ user, onDmRead }) {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
                         <strong style={{ fontSize: '14px', color: 'var(--text-primary)' }}>{member.fullName || member.username}</strong>
                         {isCreator && (
-                          <span className="classroom-badge" style={{ background: '#fef3c7', color: '#92400e', padding: '2px 7px', borderRadius: '10px', fontSize: '11px', fontWeight: 600 }}>Owner</span>
+                          <span className="classroom-badge" style={{ background: '#fef3c7', color: '#92400e', padding: '2px 7px', borderRadius: '10px', fontSize: '11px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                            <Crown size={10} strokeWidth={2} />Owner
+                          </span>
                         )}
                         {isMemberCr && (
-                          <span className="classroom-badge" style={{ background: '#e0f2fe', color: '#0284c7', padding: '2px 7px', borderRadius: '10px', fontSize: '11px', fontWeight: 600 }}>CR</span>
+                          <span className="classroom-badge" style={{ background: '#e0f2fe', color: '#0284c7', padding: '2px 7px', borderRadius: '10px', fontSize: '11px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                            <Shield size={10} strokeWidth={2} />CR
+                          </span>
                         )}
                       </div>
                       {member.fullName && <p style={{ color: '#888', fontSize: '12px', margin: '1px 0 0' }}>@{member.username}</p>}
                     </div>
                   </div>
-                  <p className="classroom-description">{member.email}</p>
+                  <p className="classroom-description" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <Mail size={12} style={{ flexShrink: 0, color: 'var(--text-secondary)' }} />
+                    {member.email}
+                  </p>
                   {member.phone && (
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <Phone size={12} style={{ flexShrink: 0 }} />
                       {member.phone}
                       {member.phone_public && (
-                        <span style={{ marginLeft: '5px', fontSize: '10px', color: '#16a34a' }}>public</span>
+                        <span style={{ fontSize: '10px', color: '#16a34a' }}>public</span>
                       )}
                     </p>
                   )}
@@ -725,27 +754,35 @@ function ClassroomDetail({ user, onDmRead }) {
                         <button
                           onClick={() => setDmTarget({ id: member.id, name: member.fullName || member.username })}
                           style={{
-                            background: '#3b82f6', color: 'white', border: 'none',
+                            background: 'rgba(59,130,246,0.1)', color: '#3b82f6',
+                            border: '1px solid rgba(59,130,246,0.3)',
                             borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
+                            display: 'inline-flex', alignItems: 'center', gap: '5px',
                           }}
                         >
-                          Message
+                          <MessageSquare size={12} strokeWidth={2} />Message
                         </button>
                       )}
                       {canKick && (
                         <>
-                          <button onClick={() => handleRemoveMember(member.id)} style={{
-                            background: '#dc2626', color: 'white', border: 'none',
+                          <button onClick={() => handleRemoveMember(member.id, member.fullName || member.username)} style={{
+                            background: 'rgba(220,38,38,0.08)', color: '#dc2626',
+                            border: '1px solid rgba(220,38,38,0.25)',
                             borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
-                          }}>Remove</button>
+                            display: 'inline-flex', alignItems: 'center', gap: '5px',
+                          }}>
+                            <UserX size={12} strokeWidth={2} />Remove
+                          </button>
                           {member.profile_picture && (
                             <button onClick={() => { setRemovePhotoTarget({ id: member.id, name: member.fullName || member.username }); setRemovePhotoReason(''); }} style={{
-                              background: '#dc2626', color: 'white', border: 'none',
+                              background: 'rgba(220,38,38,0.08)', color: '#dc2626',
+                              border: '1px solid rgba(220,38,38,0.25)',
                               borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
                             }}>Remove Photo</button>
                           )}
                           <button onClick={() => { setFlagNameTarget({ id: member.id, name: member.fullName || member.username }); setFlagNameReason(''); }} style={{
-                            background: '#16a34a', color: 'white', border: 'none',
+                            background: 'rgba(22,163,74,0.08)', color: '#16a34a',
+                            border: '1px solid rgba(22,163,74,0.25)',
                             borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
                           }}>Flag Name</button>
                         </>
@@ -1091,6 +1128,46 @@ function ClassroomDetail({ user, onDmRead }) {
         }}
       />
 
+      {/* Remove Member Modal */}
+      {removeMemberTarget && (
+        <div className="modal-overlay" onClick={() => setRemoveMemberTarget(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '420px' }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: '16px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <UserX size={18} strokeWidth={2} style={{ color: '#dc2626' }} />
+              Remove {removeMemberTarget.name}?
+            </h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: '0 0 14px' }}>
+              They will be removed immediately and notified with your reason.
+            </p>
+            <textarea
+              value={removeMemberReason}
+              onChange={e => setRemoveMemberReason(e.target.value)}
+              placeholder="Reason for removal (optional but recommended)…"
+              rows={3}
+              style={{
+                width: '100%', boxSizing: 'border-box', borderRadius: '8px',
+                border: '1.5px solid var(--border-color)', padding: '10px 12px',
+                fontSize: '13px', background: 'var(--card-bg)', color: 'var(--text-primary)',
+                resize: 'vertical', outline: 'none', marginBottom: '16px',
+              }}
+            />
+            <div className="modal-buttons">
+              <button type="button" onClick={() => setRemoveMemberTarget(null)} disabled={removeMemberLoading}>Cancel</button>
+              <button
+                type="button"
+                onClick={handleConfirmRemoveMember}
+                disabled={removeMemberLoading}
+                style={{ background: '#dc2626', color: 'white' }}
+              >
+                {removeMemberLoading ? 'Removing…' : 'Remove Member'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <RemovedNotification data={removedNotification} />
+
       {/* Fullscreen photo overlay */}
       {fullscreenPhoto && (
         <div
@@ -1128,25 +1205,16 @@ function ClassroomDetail({ user, onDmRead }) {
             style={{
               position: 'absolute', top: '16px', right: '20px',
               background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white',
-              fontSize: '24px', cursor: 'pointer', borderRadius: '50%',
+              cursor: 'pointer', borderRadius: '50%',
               width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
-          >×</button>
+          ><X size={20} strokeWidth={2} /></button>
         </div>
       )}
     </div>
   );
 }
 
-function sizeLabel(bytes) {
-  if (!bytes) return '';
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function dmFileIcon(mime) {
-  return <FileTypeIcon mime={mime} size={18} />;
-}
 
 function DMModal({ target, messages, loading, error, text, onTextChange, pendingFile, onFilePick, onClearFile, onSend, onDelete, sending, uploading, bottomRef, userId, onClose, onOpenFilePicker }) {
   const [dmDeleteMenu, setDmDeleteMenu] = React.useState(null); // { msgId, x, y }
@@ -1195,9 +1263,9 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
             <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Private Message</div>
           </div>
           <button onClick={onClose} style={{
-            background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer',
-            color: 'var(--text-secondary)', lineHeight: 1, padding: '2px 6px',
-          }}>×</button>
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center',
+          }}><X size={18} strokeWidth={2} /></button>
         </div>
 
         {/* Messages */}
@@ -1218,9 +1286,7 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
             return (
               <div key={msg.id} style={{ display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: '6px' }}>
                 {!isMe && (
-                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#667eea', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: 'white', fontWeight: 700, flexShrink: 0 }}>
-                    {(msg.sender_name || '?')[0].toUpperCase()}
-                  </div>
+                  <Avatar user={{ username: msg.sender_name || '?' }} size={28} />
                 )}
                 <div style={{ maxWidth: '72%' }}>
                   {!isMe && (
@@ -1245,7 +1311,7 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
                       <>
                         {hasFile && (
                           <a href={fileUrl} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isMe ? 'rgba(255,255,255,0.9)' : '#667eea', textDecoration: 'none', marginBottom: msg.text ? '6px' : 0 }}>
-                            {dmFileIcon(msg.file.mime_type)}
+                            <FileTypeIcon mime={msg.file.mime_type} size={18} />
                             <span style={{ fontSize: '13px', fontWeight: 500 }}>{msg.file.name}</span>
                             <span style={{ fontSize: '11px', opacity: 0.75 }}>{sizeLabel(msg.file.size)}</span>
                           </a>
@@ -1267,7 +1333,7 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
                     )}
                   </div>
                   <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px', paddingLeft: '4px', textAlign: isMe ? 'right' : 'left', display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', alignItems: 'center', gap: '4px' }}>
-                    <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    <span>{formatTime(msg.created_at)}</span>
                     {isLastMine && isRead && (
                       <span style={{ color: '#667eea', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '2px' }}><Check size={11} strokeWidth={2} /> Seen</span>
                     )}

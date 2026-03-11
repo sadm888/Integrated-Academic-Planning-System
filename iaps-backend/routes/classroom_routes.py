@@ -621,6 +621,7 @@ def remove_member(classroom_id):
         data = request.get_json()
         cr_user_id = request.user['user_id']
         target_user_id = data.get('user_id', '').strip()
+        reason = data.get('reason', '').strip()
 
         if not target_user_id:
             return jsonify({'error': 'User ID is required'}), 400
@@ -667,6 +668,20 @@ def remove_member(classroom_id):
             {'classroom_id': classroom_id},
             {'$pull': {'cr_ids': target_user_id}}
         )
+
+        # Notify the removed user via socket
+        try:
+            from routes.chat_routes import emit_to_user
+            cr_user = db.users.find_one({'_id': ObjectId(cr_user_id)}, {'display_name': 1, 'name': 1})
+            cr_name = (cr_user.get('display_name') or cr_user.get('name', 'CR')) if cr_user else 'CR'
+            emit_to_user(target_user_id, 'member_removed', {
+                'classroom_id': classroom_id,
+                'classroom_name': classroom.get('name', ''),
+                'removed_by': cr_name,
+                'reason': reason,
+            })
+        except Exception:
+            pass
 
         return jsonify({'message': 'Member removed'}), 200
 

@@ -4,8 +4,10 @@ import { chatAPI, semesterAPI, classroomAPI, settingsAPI, documentAPI, BACKEND_U
 import Avatar from '../components/Avatar';
 import { useSocket } from '../hooks/useSocket';
 import FilePickerModal from '../components/FilePickerModal';
-import { Image, Video, Music, FileText, Paperclip, Pin, Trash2, EyeOff, Eye, AlertTriangle, Folder, FolderOpen, Lock, Clock, X } from 'lucide-react';
-import { FileTypeIcon } from '../utils/fileUtils';
+import { Image, Video, Music, FileText, Paperclip, Pin, Trash2, EyeOff, Eye, AlertTriangle, Folder, FolderOpen, Lock, Clock, X, UserX } from 'lucide-react';
+import { FileTypeIcon, sizeLabel } from '../utils/fileUtils';
+import { formatTime, relativeTime, formatDate } from '../utils/timeUtils';
+import RemovedNotification from '../components/RemovedNotification';
 
 // ── File category helpers ────────────────────────────────────────────────────
 function fileCategory(mime) {
@@ -47,13 +49,6 @@ function FilesPanel({ messages }) {
 
   const formatDate = (iso) =>
     new Date(iso).toLocaleDateString([], { day: 'numeric', month: 'short' });
-
-  const sizeLabel = (bytes) => {
-    if (!bytes) return '';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
 
   return (
     <div style={{
@@ -220,6 +215,10 @@ function Chat({ user }) {
   const [persDocsPwErr, setPersDocsPwErr]       = useState('');
   const [persDocsPwChecking, setPersDocsPwChecking] = useState(false);
   const [attachingDoc, setAttachingDoc]         = useState(false);
+  const [kickTarget, setKickTarget]             = useState(null); // { id, name }
+  const [kickReason, setKickReason]             = useState('');
+  const [kickLoading, setKickLoading]           = useState(false);
+  const [removedNotification, setRemovedNotification] = useState(null);
 
   const bottomRef             = useRef(null);
   const fileInputRef          = useRef(null);
@@ -315,6 +314,7 @@ function Chat({ user }) {
     onPinned:     handlePinned,
     onUnpinned:   handleUnpinned,
     onTombstoned: handleTombstoned,
+    onMemberRemoved: (data) => setRemovedNotification(data),
   });
 
   // ── Close attach menu on outside click ────────────────────────────────────
@@ -563,12 +563,22 @@ function Chat({ user }) {
   };
 
   // ── Kick ───────────────────────────────────────────────────────────────────
-  const handleKickUser = async (targetUserId, targetName) => {
-    if (!window.confirm(`Remove ${targetName} from the classroom? They will lose access immediately.`)) return;
+  const handleKickUser = (targetUserId, targetName) => {
+    setKickTarget({ id: targetUserId, name: targetName });
+    setKickReason('');
+  };
+
+  const handleConfirmKick = async () => {
+    if (!kickTarget) return;
+    setKickLoading(true);
     try {
-      await classroomAPI.removeMember(classroomId, targetUserId);
+      await classroomAPI.removeMember(classroomId, kickTarget.id, kickReason.trim());
+      setKickTarget(null);
+      setKickReason('');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to remove user');
+    } finally {
+      setKickLoading(false);
     }
   };
 
@@ -645,8 +655,6 @@ function Chat({ user }) {
       );
     }
 
-    const isPdf = mime_type === 'application/pdf';
-    const sizeLabel = size ? ` · ${(size / 1024).toFixed(0)} KB` : '';
     return (
       <div>
         {msg.text && <p style={{ margin: '0 0 6px', whiteSpace: 'pre-wrap' }}>{msg.text}</p>}
@@ -661,23 +669,10 @@ function Chat({ user }) {
           }}
         >
           <FileTypeIcon mime={mime_type} size={18} />
-          <span style={{ wordBreak: 'break-all' }}>{name}{sizeLabel}</span>
+          <span style={{ wordBreak: 'break-all' }}>{name}{size ? ` · ${sizeLabel(size)}` : ''}</span>
         </a>
       </div>
     );
-  };
-
-  const formatTime = (iso) =>
-    new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-  const formatDate = (iso) => {
-    const d = new Date(iso);
-    const today = new Date();
-    if (d.toDateString() === today.toDateString()) return 'Today';
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
-    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
-    return d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
   // Group messages by date dividers
@@ -756,7 +751,7 @@ function Chat({ user }) {
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           }}>
             <span>{error}</span>
-            <button onClick={() => setError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '16px', padding: '0 4px' }}>×</button>
+            <button onClick={() => setError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '0 4px', display: 'flex', alignItems: 'center' }}><X size={15} strokeWidth={2} /></button>
           </div>
         )}
 
@@ -778,8 +773,8 @@ function Chat({ user }) {
             </div>
             <button
               onClick={() => setWarnBanner(null)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#92400e', fontSize: '18px', lineHeight: 1, flexShrink: 0 }}
-            >×</button>
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#92400e', flexShrink: 0, display: 'flex', alignItems: 'center' }}
+            ><X size={16} strokeWidth={2} /></button>
           </div>
         )}
 
@@ -1047,16 +1042,23 @@ function Chat({ user }) {
                     <div style={{
                       padding: '10px 14px',
                       borderRadius: isMe ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-                      background: isMe ? '#667eea' : 'var(--card-bg)',
+                      background: isMe
+                        ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+                        : 'var(--card-bg)',
                       color: isMe ? 'white' : 'var(--text-primary)',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+                      boxShadow: isMe
+                        ? '0 3px 12px rgba(102,126,234,0.4)'
+                        : '0 1px 3px rgba(0,0,0,0.08)',
                       fontSize: '14px', lineHeight: '1.5',
                     }}>
                       {renderContent(msg)}
                     </div>
                   </div>
-                  <span style={{ fontSize: '11px', color: '#9ca3af', marginTop: '3px', marginLeft: '4px', marginRight: '4px' }}>
-                    {msg.pending ? 'Sending…' : formatTime(msg.created_at)}
+                  <span
+                    title={msg.pending ? undefined : formatTime(msg.created_at)}
+                    style={{ fontSize: '11px', color: '#9ca3af', marginTop: '3px', marginLeft: '4px', marginRight: '4px', cursor: 'default' }}
+                  >
+                    {msg.pending ? 'Sending…' : relativeTime(msg.created_at)}
                   </span>
                 </div>
               </div>
@@ -1109,9 +1111,7 @@ function Chat({ user }) {
               {pendingChatFile.name}
             </span>
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)', flexShrink: 0 }}>
-              {pendingChatFile.size < 1024 * 1024
-                ? `${(pendingChatFile.size / 1024).toFixed(0)} KB`
-                : `${(pendingChatFile.size / (1024 * 1024)).toFixed(1)} MB`}
+              {sizeLabel(pendingChatFile.size)}
             </span>
             <button
               onClick={() => setPendingChatFile(null)}
@@ -1318,10 +1318,10 @@ function Chat({ user }) {
             style={{
               position: 'absolute', top: '16px', right: '20px',
               background: 'rgba(255,255,255,0.15)', border: 'none', color: 'white',
-              fontSize: '24px', cursor: 'pointer', borderRadius: '50%',
+              cursor: 'pointer', borderRadius: '50%',
               width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
-          >×</button>
+          ><X size={20} strokeWidth={2} /></button>
         </div>
       )}
 
@@ -1504,6 +1504,47 @@ function Chat({ user }) {
           </div>
         </div>
       )}
+
+      {/* Kick member modal */}
+      {kickTarget && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+          onClick={() => setKickTarget(null)}>
+          <div style={{ background: 'var(--card-bg)', borderRadius: '12px', padding: '24px', maxWidth: '420px', width: '90%' }}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 6px', fontSize: '16px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <UserX size={18} strokeWidth={2} style={{ color: '#dc2626' }} />
+              Remove {kickTarget.name}?
+            </h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: '0 0 14px' }}>
+              They will lose access immediately and be notified with your reason.
+            </p>
+            <textarea
+              value={kickReason}
+              onChange={e => setKickReason(e.target.value)}
+              placeholder="Reason for removal (optional but recommended)…"
+              rows={3}
+              style={{
+                width: '100%', boxSizing: 'border-box', borderRadius: '8px',
+                border: '1.5px solid var(--border-color)', padding: '10px 12px',
+                fontSize: '13px', background: 'var(--card-bg)', color: 'var(--text-primary)',
+                resize: 'vertical', outline: 'none', marginBottom: '16px',
+              }}
+            />
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setKickTarget(null)} disabled={kickLoading}
+                style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-primary)', fontSize: '13px', cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button onClick={handleConfirmKick} disabled={kickLoading}
+                style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', background: '#dc2626', color: 'white', fontSize: '13px', fontWeight: 600, cursor: kickLoading ? 'not-allowed' : 'pointer', opacity: kickLoading ? 0.6 : 1 }}>
+                {kickLoading ? 'Removing…' : 'Remove Member'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <RemovedNotification data={removedNotification} />
     </div>
   );
 }
