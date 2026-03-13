@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { semesterAPI, academicAPI, todoAPI, subjectAPI } from '../services/api';
 import { useSocket } from '../hooks/useSocket';
 import FilePickerModal from '../components/FilePickerModal';
@@ -7,6 +7,7 @@ import { sizeLabel, FileTypeIcon } from '../utils/fileUtils';
 import {
   Calendar, ClipboardList, GraduationCap, BookMarked, Folder,
   Lock, Unlock, Eye, EyeOff, MessageSquare, Check, X,
+  FileText, Link2,
 } from 'lucide-react';
 
 const SECTION_ICON_MAP = {
@@ -16,8 +17,11 @@ const SECTION_ICON_MAP = {
   books: BookMarked,
 };
 
-function SectionIcon({ id, size = 14 }) {
-  const Icon = SECTION_ICON_MAP[id] || Folder;
+function SectionIcon({ id, name, size = 14 }) {
+  const Icon = SECTION_ICON_MAP[id]
+    || (name && /notes?|class notes?/i.test(name) ? FileText : null)
+    || (name && /links?|meet|class link/i.test(name) ? Link2 : null)
+    || Folder;
   return <Icon size={size} strokeWidth={1.75} style={{ flexShrink: 0, color: 'var(--text-secondary)' }} />;
 }
 
@@ -308,14 +312,19 @@ function Academics({ user }) {
   const [semester, setSemester] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Restore state from localStorage on mount
+  const _savedState = (() => {
+    try { return JSON.parse(localStorage.getItem(`acad_state_${semesterId}`) || 'null'); } catch { return null; }
+  })();
+
   // Sidebar state: 'subjects' | 'sections'
-  const [viewLevel, setViewLevel] = useState('subjects');
-  const [activeSubjectId, setActiveSubjectId] = useState(null);
-  const [activeSubjectName, setActiveSubjectName] = useState('');
+  const [viewLevel, setViewLevel] = useState(_savedState?.viewLevel || 'subjects');
+  const [activeSubjectId, setActiveSubjectId] = useState(_savedState?.activeSubjectId || null);
+  const [activeSubjectName, setActiveSubjectName] = useState(_savedState?.activeSubjectName || '');
 
   const [sections, setSections] = useState([]);
   const [sectionsLoading, setSectionsLoading] = useState(false);
-  const [activeSectionId, setActiveSectionId] = useState(null);
+  const [activeSectionId, setActiveSectionId] = useState(_savedState?.activeSectionId || null);
 
   const [resources, setResources] = useState([]);
   const [chatFiles, setChatFiles] = useState([]);
@@ -332,7 +341,7 @@ function Academics({ user }) {
 
   // Folders within a section
   const [folders, setFolders] = useState([]);
-  const [activeFolderId, setActiveFolderId] = useState(null); // null = all / uncategorized
+  const [activeFolderId, setActiveFolderId] = useState(_savedState?.activeFolderId ?? null); // null = all / uncategorized
   const [showAddFolder, setShowAddFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [folderLoading, setFolderLoading] = useState(false);
@@ -348,6 +357,7 @@ function Academics({ user }) {
   const [todos, setTodos] = useState([]);
   const [newTodoText, setNewTodoText] = useState('');
   const [todoLoading, setTodoLoading] = useState(false);
+  const pendingRestoreFolderRef = useRef(undefined); // sentinel for folder restore on navigation back
 
   // Remove chat-linked resources when the underlying message is deleted/tombstoned
   const handleChatDeleted = useCallback(({ message_id }) => {
@@ -372,6 +382,20 @@ function Academics({ user }) {
   }, [semesterId]);
 
   // Auto-select subject from ?subject= query param
+  // Persist nav state to localStorage whenever key state changes
+  useEffect(() => {
+    localStorage.setItem(`acad_state_${semesterId}`, JSON.stringify({
+      viewLevel, activeSubjectId, activeSubjectName, activeSectionId, activeFolderId,
+    }));
+  }, [viewLevel, activeSubjectId, activeSubjectName, activeSectionId, activeFolderId, semesterId]);
+
+  // Restore subject data when returning with a saved activeSubjectId
+  useEffect(() => {
+    if (!semester || !activeSubjectId || viewLevel !== 'sections') return;
+    const subject = semester.subjects?.find(s => String(s.id) === String(activeSubjectId));
+    if (subject) selectSubject(subject, { restoreSectionId: activeSectionId, restoreFolderId: activeFolderId });
+  }, [semester]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (!semester) return;
     const subjectId = new URLSearchParams(location.search).get('subject');
@@ -380,7 +404,7 @@ function Academics({ user }) {
     if (subject) selectSubject(subject);
   }, [semester]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const selectSubject = async (subject) => {
+  const selectSubject = async (subject, opts = {}) => {
     setActiveSubjectId(subject.id);
     setActiveSubjectName(subject.name);
     setViewLevel('sections');
@@ -400,7 +424,10 @@ function Academics({ user }) {
       setSections(secs);
       setResources(resRes.data.resources || []);
       setChatFiles(cfRes.data.chat_files || []);
-      if (secs.length > 0) setActiveSectionId(secs[0].id);
+      // Restore previously selected section, or default to first
+      const restoredSec = opts.restoreSectionId && secs.find(s => String(s.id) === String(opts.restoreSectionId));
+      if (opts.restoreFolderId !== undefined) pendingRestoreFolderRef.current = opts.restoreFolderId ?? null;
+      setActiveSectionId(restoredSec ? restoredSec.id : secs.length > 0 ? secs[0].id : null);
       // Filter todos for this subject
       const allTodos = todoRes.data.todos || [];
       setTodos(allTodos.filter(t => t.subject_id === subject.id));
@@ -417,7 +444,12 @@ function Academics({ user }) {
     academicAPI.getFolders(semesterId, activeSubjectId, activeSectionId)
       .then(res => setFolders(res.data.folders || []))
       .catch(() => setFolders([]));
-    setActiveFolderId(null);
+    if (pendingRestoreFolderRef.current !== undefined) {
+      setActiveFolderId(pendingRestoreFolderRef.current);
+      pendingRestoreFolderRef.current = undefined;
+    } else {
+      setActiveFolderId(null);
+    }
   }, [activeSectionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const backToSubjects = () => {
@@ -709,7 +741,8 @@ function Academics({ user }) {
   }
 
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - 56px)', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 56px)', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
       {/* ── Left sidebar ── */}
       <div style={{
@@ -720,17 +753,25 @@ function Academics({ user }) {
         overflowY: 'auto',
       }}>
         {/* Header */}
-        <div style={{ padding: '16px 16px 8px' }}>
-          <button
-            onClick={() => navigate(`/classroom/${classroomId}/semester/${semesterId}`)}
-            style={{ background: 'none', border: 'none', color: '#667eea', cursor: 'pointer', fontSize: '13px', padding: 0, marginBottom: '6px' }}
+        <div style={{ padding: '12px 16px 8px' }}>
+          <Link
+            to={`/classroom/${classroomId}/semester/${semesterId}`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '4px', marginBottom: '8px',
+              fontSize: '11px', color: 'var(--text-secondary)', textDecoration: 'none',
+              fontWeight: 600, padding: '4px 8px', borderRadius: '6px',
+              background: 'var(--bg-color)', border: '1px solid var(--border-color)',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--border-color)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'var(--bg-color)'}
           >
-            ← Back to Semester
-          </button>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            Dashboard
+          </Link>
           <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text-primary)', lineHeight: 1.3 }}>
             {semester?.name}
           </div>
-          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>Subjects</div>
+          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>Resources</div>
         </div>
 
         <div style={{ height: '1px', background: 'var(--border-color)', margin: '8px 0' }} />
@@ -865,7 +906,7 @@ function Academics({ user }) {
                               opacity: hiddenFromMe ? 0.5 : 1,
                             }}
                           >
-                            <SectionIcon id={sec.id} size={13} />
+                            <SectionIcon id={sec.id} name={sec.name} size={13} />
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: hiddenFromMe ? 'line-through' : 'none' }}>{sec.name}</span>
                             {sec.cr_only && <Lock size={10} strokeWidth={2} style={{ marginLeft: 'auto', flexShrink: 0, color: '#d97706' }} />}
                             {sec.is_private && <Lock size={10} strokeWidth={2} style={{ marginLeft: 'auto', flexShrink: 0, color: '#7e22ce' }} />}
@@ -1221,6 +1262,7 @@ function Academics({ user }) {
       )}
 
       </div>{/* end main content + todo panel */}
+    </div>{/* end split panel */}
     </div>
   );
 }

@@ -68,11 +68,20 @@ def create_subject():
             label = 'personal subject' if is_personal else 'class subject'
             return jsonify({'error': f'A {label} with this name already exists in this semester'}), 400
 
+        credits = data.get('credits', '')
+        faculties = data.get('faculties', [])
+        details = data.get('details', '').strip()
+        if isinstance(faculties, str):
+            faculties = [f.strip() for f in faculties.split(',') if f.strip()]
+
         subject = {
             'classroom_id': classroom_id,
             'semester_id': semester_id,
             'name': name,
             'code': code,
+            'credits': credits,
+            'faculties': faculties,
+            'details': details,
             'personal': is_personal,
             'created_by': user_id,
             'created_at': datetime.utcnow()
@@ -86,6 +95,9 @@ def create_subject():
                 'id': str(result.inserted_id),
                 'name': name,
                 'code': code,
+                'credits': credits,
+                'faculties': faculties,
+                'details': details,
                 'personal': is_personal,
                 'created_by': user_id,
             }
@@ -128,6 +140,9 @@ def list_subjects(semester_id):
             'id': str(s['_id']),
             'name': s['name'],
             'code': s.get('code', ''),
+            'credits': s.get('credits', ''),
+            'faculties': s.get('faculties', []),
+            'details': s.get('details', ''),
             'personal': s.get('personal', False),
             'created_by': s.get('created_by', ''),
         } for s in subjects]
@@ -195,3 +210,57 @@ def delete_subject(subject_id):
     except Exception as e:
         logger.error(f"Delete subject error: {e}")
         return jsonify({'error': 'Failed to delete subject'}), 500
+
+
+@subject_bp.route('/<subject_id>', methods=['PATCH'])
+@cross_origin()
+@token_required
+def update_subject(subject_id):
+    """Update subject fields (credits, faculties, details). CR only for class subjects."""
+    from database import get_db
+    try:
+        data = request.get_json()
+        user_id = request.user['user_id']
+        db = get_db()
+
+        subject = db.subjects.find_one({'_id': ObjectId(subject_id)})
+        if not subject:
+            return jsonify({'error': 'Subject not found'}), 404
+
+        semester = db.semesters.find_one({'_id': ObjectId(subject['semester_id'])})
+        if not semester:
+            return jsonify({'error': 'Semester not found'}), 404
+
+        # Personal subjects: only owner can edit
+        if subject.get('personal'):
+            if subject.get('created_by') != user_id:
+                return jsonify({'error': 'Only the creator can edit a personal subject'}), 403
+        else:
+            if not is_cr_of(semester, user_id):
+                return jsonify({'error': 'Only a CR can edit class subjects'}), 403
+
+        update_fields = {}
+        if 'credits' in data:
+            update_fields['credits'] = data['credits']
+        if 'faculties' in data:
+            faculties = data['faculties']
+            if isinstance(faculties, str):
+                faculties = [f.strip() for f in faculties.split(',') if f.strip()]
+            update_fields['faculties'] = faculties
+        if 'details' in data:
+            update_fields['details'] = data['details'].strip()
+        if 'name' in data and data['name'].strip():
+            update_fields['name'] = data['name'].strip()
+        if 'code' in data:
+            update_fields['code'] = data['code'].strip()
+
+        if not update_fields:
+            return jsonify({'error': 'No fields to update'}), 400
+
+        db.subjects.update_one({'_id': ObjectId(subject_id)}, {'$set': update_fields})
+
+        return jsonify({'message': 'Subject updated'}), 200
+
+    except Exception as e:
+        logger.error(f"Update subject error: {e}")
+        return jsonify({'error': 'Failed to update subject'}), 500

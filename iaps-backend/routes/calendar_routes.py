@@ -235,10 +235,22 @@ def create_event():
         description = data.get('description', '').strip()
         location = data.get('location', '').strip()
 
+        event_type = data.get('event_type', '').strip()
+
         if not all([title, start_dt, end_dt]):
             return jsonify({'error': 'title, start_datetime, and end_datetime are required'}), 400
 
+        TYPE_COLOR_ID = {
+            'Lecture': '7', 'Lab': '3', 'Tutorial': '2',
+            'Assignment': '6', 'Exam': '11', 'Holiday': '10',
+        }
+
         event_body = format_event_for_google(title, start_dt, end_dt, description, location)
+        if event_type:
+            event_body['colorId'] = TYPE_COLOR_ID.get(event_type, '1')
+            event_body['extendedProperties'] = {
+                'private': {'iaps_type': event_type}
+            }
         created = create_calendar_event(service, event_body)
 
         return jsonify({'event': created}), 201
@@ -269,6 +281,10 @@ def update_event(event_id):
         if err:
             return err
 
+        TYPE_COLOR_ID = {
+            'Lecture': '7', 'Lab': '3', 'Tutorial': '2',
+            'Assignment': '6', 'Exam': '11', 'Holiday': '10',
+        }
         event_body = {}
         if 'title' in data:
             event_body['summary'] = data['title']
@@ -280,6 +296,11 @@ def update_event(event_id):
             event_body['start'] = {'dateTime': data['start_datetime'], 'timeZone': 'UTC'}
         if 'end_datetime' in data:
             event_body['end'] = {'dateTime': data['end_datetime'], 'timeZone': 'UTC'}
+        if 'event_type' in data:
+            et = data['event_type']
+            if et:
+                event_body['colorId'] = TYPE_COLOR_ID.get(et, '1')
+                event_body['extendedProperties'] = {'private': {'iaps_type': et}}
 
         updated = update_calendar_event(service, event_id, event_body)
         return jsonify({'event': updated}), 200

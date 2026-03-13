@@ -137,6 +137,9 @@ def get_semester(semester_id):
                 'id': str(s['_id']),
                 'name': s['name'],
                 'code': s.get('code', ''),
+                'credits': s.get('credits', ''),
+                'faculties': s.get('faculties', []),
+                'details': s.get('details', ''),
                 'personal': s.get('personal', False),
                 'created_by': s.get('created_by', ''),
             }

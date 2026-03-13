@@ -567,8 +567,8 @@ function ClassroomDetail({ user, onDmRead }) {
       {/* CR result notifications (accepted / declined / stepped down) */}
       {crNotifications.map(note => (
         <div key={note.id} style={{
-          background: note.type === 'cr_accepted' ? 'rgba(16,185,129,0.1)' : note.type === 'cr_stepped_down' ? '#fffbeb' : 'rgba(239,68,68,0.08)',
-          border: `1.5px solid ${note.type === 'cr_accepted' ? 'rgba(16,185,129,0.35)' : note.type === 'cr_stepped_down' ? '#fde68a' : 'rgba(239,68,68,0.35)'}`,
+          background: note.type === 'cr_accepted' ? 'rgba(16,185,129,0.1)' : note.type === 'cr_stepped_down' ? 'rgba(217,119,6,0.1)' : 'rgba(239,68,68,0.08)',
+          border: `1.5px solid ${note.type === 'cr_accepted' ? 'rgba(16,185,129,0.35)' : note.type === 'cr_stepped_down' ? 'rgba(217,119,6,0.35)' : 'rgba(239,68,68,0.35)'}`,
           borderRadius: '10px', padding: '12px 18px', marginBottom: '12px',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
         }}>

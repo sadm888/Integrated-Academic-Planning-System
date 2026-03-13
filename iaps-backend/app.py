@@ -64,6 +64,8 @@ def create_app():
     from routes.academic_routes import academic_bp
     from routes.announcement_routes import announcement_bp
     from routes.dm_routes import dm_bp
+    from routes.timetable_routes import timetable_bp
+    from routes.marks_routes import marks_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(classroom_bp)
@@ -78,6 +80,8 @@ def create_app():
     app.register_blueprint(academic_bp)
     app.register_blueprint(announcement_bp)
     app.register_blueprint(dm_bp)
+    app.register_blueprint(timetable_bp)
+    app.register_blueprint(marks_bp)
 
     # Ensure avatar upload directory exists
     import os as _os

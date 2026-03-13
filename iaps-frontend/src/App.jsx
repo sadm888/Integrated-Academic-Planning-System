@@ -11,6 +11,10 @@ import Chat from './pages/Chat';
 import Settings from './pages/Settings';
 import Academics from './pages/Academics';
 import Files from './pages/Files';
+import Timetable from './pages/Timetable';
+import AcademicCalendar from './pages/AcademicCalendar';
+import Marks from './pages/Marks';
+import MarksDetail from './pages/MarksDetail';
 import Navbar from './components/Navbar';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
@@ -427,6 +431,56 @@ function App() {
           element={
             user ? (
               <SemesterDetail user={user} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/classroom/:classroomId/semester/:semesterId/marks"
+          element={
+            user ? (
+              <Marks user={user} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/classroom/:classroomId/semester/:semesterId/marks/:subjectId"
+          element={
+            user ? (
+              <MarksDetail user={user} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/classroom/:classroomId/semester/:semesterId/timetable"
+          element={
+            user ? (
+              <Timetable user={user} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/classroom/:classroomId/semester/:semesterId/academic-calendar"
+          element={
+            user ? (
+              <AcademicCalendar user={user} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/classroom/:classroomId/semester/:semesterId/calendar"
+          element={
+            user ? (
+              <Calendar user={user} />
             ) : (
               <Navigate to="/login" replace />
             )

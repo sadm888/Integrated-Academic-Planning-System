@@ -63,6 +63,32 @@ const MONTH_NAMES = [
 ];
 const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
+const EVENT_TYPES = ['Lecture', 'Lab', 'Tutorial', 'Assignment', 'Exam', 'Holiday', 'Personal'];
+
+const EVENT_TYPE_COLORS = {
+  Lecture:    { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd' },
+  Lab:        { bg: '#ede9fe', text: '#5b21b6', border: '#c4b5fd' },
+  Tutorial:   { bg: '#ccfbf1', text: '#065f46', border: '#6ee7b7' },
+  Assignment: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d' },
+  Exam:       { bg: '#fee2e2', text: '#991b1b', border: '#fca5a5' },
+  Holiday:    { bg: '#dcfce7', text: '#166534', border: '#86efac' },
+  Personal:   { bg: '#f3e8ff', text: '#6b21a8', border: '#d8b4fe' },
+};
+
+function getEventTypeFromGCal(ev) {
+  // Check IAPS extended property first
+  const iapsType = ev.extendedProperties?.private?.iaps_type;
+  if (iapsType) return iapsType;
+  // Fallback: infer from colorId
+  const colorMap = { '7': 'Lecture', '3': 'Lab', '2': 'Tutorial', '6': 'Assignment', '11': 'Exam', '10': 'Holiday' };
+  return colorMap[ev.colorId] || 'Personal';
+}
+
+function eventChipStyle(ev) {
+  const type = getEventTypeFromGCal(ev);
+  return EVENT_TYPE_COLORS[type] || EVENT_TYPE_COLORS.Personal;
+}
+
 function Calendar({ user }) {
   const [searchParams] = useSearchParams();
 
@@ -88,7 +114,7 @@ function Calendar({ user }) {
   // Add event modal
   const [showAddModal, setShowAddModal] = useState(false);
   const [addForm, setAddForm] = useState({
-    title: '', start_datetime: '', end_datetime: '', description: '', location: ''
+    title: '', start_datetime: '', end_datetime: '', description: '', location: '', event_type: 'Personal'
   });
   const [addLoading, setAddLoading] = useState(false);
 
@@ -96,7 +122,7 @@ function Calendar({ user }) {
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [showEventModal, setShowEventModal] = useState(false);
   const [editForm, setEditForm] = useState({
-    title: '', start_datetime: '', end_datetime: '', description: '', location: ''
+    title: '', start_datetime: '', end_datetime: '', description: '', location: '', event_type: 'Personal'
   });
   const [editLoading, setEditLoading] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -201,7 +227,8 @@ function Calendar({ user }) {
     setError('');
     try {
       const res = await calendarAPI.getAuthUrl();
-      window.location.href = res.data.auth_url;
+      window.open(res.data.auth_url, '_blank');
+      setConnectLoading(false);
     } catch (err) {
       setError('Failed to initiate Google Calendar connection.');
       setConnectLoading(false);
@@ -249,6 +276,7 @@ function Calendar({ user }) {
       end_datetime: `${padDateStr(y, m, day)}T10:00`,
       description: '',
       location: '',
+      event_type: 'Personal',
     });
     setShowAddModal(true);
     setError('');
@@ -264,6 +292,7 @@ function Calendar({ user }) {
       end_datetime: toLocal(ev.end?.dateTime),
       description: ev.description || '',
       location: ev.location || '',
+      event_type: getEventTypeFromGCal(ev),
     });
     setIsEditing(false);
     setShowEventModal(true);
@@ -282,6 +311,7 @@ function Calendar({ user }) {
         end_datetime: new Date(addForm.end_datetime).toISOString(),
         description: addForm.description,
         location: addForm.location,
+        event_type: addForm.event_type,
       });
       setShowAddModal(false);
       setSuccess('Event added to Google Calendar!');
@@ -305,6 +335,7 @@ function Calendar({ user }) {
         end_datetime: new Date(editForm.end_datetime).toISOString(),
         description: editForm.description,
         location: editForm.location,
+        event_type: editForm.event_type,
       });
       setShowEventModal(false);
       setSuccess('Event updated!');
@@ -492,21 +523,25 @@ function Calendar({ user }) {
                     }}>
                       {day}
                     </div>
-                    {dayEvents.slice(0, 3).map(ev => (
-                      <div
-                        key={ev.id}
-                        onClick={(e) => handleEventChipClick(e, ev)}
-                        title={ev.summary}
-                        style={{
-                          background: '#667eea', color: 'white', borderRadius: '3px',
-                          padding: '2px 5px', fontSize: '11px', marginBottom: '2px',
-                          overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        {ev.summary}
-                      </div>
-                    ))}
+                    {dayEvents.slice(0, 3).map(ev => {
+                      const chipStyle = eventChipStyle(ev);
+                      return (
+                        <div
+                          key={ev.id}
+                          onClick={(e) => handleEventChipClick(e, ev)}
+                          title={ev.summary}
+                          style={{
+                            background: chipStyle.bg, color: chipStyle.text,
+                            border: `1px solid ${chipStyle.border}`,
+                            borderRadius: '3px', padding: '2px 5px', fontSize: '11px',
+                            marginBottom: '2px', overflow: 'hidden', whiteSpace: 'nowrap',
+                            textOverflow: 'ellipsis', cursor: 'pointer', fontWeight: 500,
+                          }}
+                        >
+                          {ev.summary}
+                        </div>
+                      );
+                    })}
                     {dayEvents.length > 3 && (
                       <div style={{ fontSize: '10px', color: '#888' }}>+{dayEvents.length - 3} more</div>
                     )}
@@ -658,6 +693,17 @@ function Calendar({ user }) {
                   disabled={addLoading}
                 />
               </div>
+              <div className="form-group">
+                <label>Event Type</label>
+                <select
+                  value={addForm.event_type}
+                  onChange={(e) => setAddForm({ ...addForm, event_type: e.target.value })}
+                  disabled={addLoading}
+                  style={{ width: '100%', padding: '8px 12px', border: '1.5px solid var(--border-color)', borderRadius: '6px', fontSize: '14px', fontFamily: 'inherit', background: 'var(--bg-color)', color: 'var(--text-primary)', outline: 'none' }}
+                >
+                  {EVENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
               <div className="modal-buttons">
                 <button type="button" onClick={() => setShowAddModal(false)} disabled={addLoading}>Cancel</button>
                 <button type="submit" disabled={addLoading}>
@@ -726,6 +772,17 @@ function Calendar({ user }) {
                       disabled={editLoading}
                     />
                   </div>
+                  <div className="form-group">
+                    <label>Event Type</label>
+                    <select
+                      value={editForm.event_type}
+                      onChange={(e) => setEditForm({ ...editForm, event_type: e.target.value })}
+                      disabled={editLoading}
+                      style={{ width: '100%', padding: '8px 12px', border: '1.5px solid var(--border-color)', borderRadius: '6px', fontSize: '14px', fontFamily: 'inherit', background: 'var(--bg-color)', color: 'var(--text-primary)', outline: 'none' }}
+                    >
+                      {EVENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
                   <div className="modal-buttons">
                     <button type="button" onClick={() => setIsEditing(false)} disabled={editLoading}>Back</button>
                     <button type="submit" disabled={editLoading}>
@@ -736,7 +793,19 @@ function Calendar({ user }) {
               </>
             ) : (
               <>
-                <h2 style={{ marginBottom: '16px' }}>{selectedEvent.summary}</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                  <h2 style={{ margin: 0 }}>{selectedEvent.summary}</h2>
+                  {(() => {
+                    const type = getEventTypeFromGCal(selectedEvent);
+                    const cs = EVENT_TYPE_COLORS[type] || EVENT_TYPE_COLORS.Personal;
+                    return (
+                      <span style={{
+                        fontSize: '11px', fontWeight: 700, padding: '3px 10px', borderRadius: '12px',
+                        background: cs.bg, color: cs.text, border: `1px solid ${cs.border}`,
+                      }}>{type}</span>
+                    );
+                  })()}
+                </div>
                 {selectedEvent.start?.dateTime && (
                   <p style={{ color: '#555', marginBottom: '6px', fontSize: '14px' }}>
                     <strong>Start:</strong> {new Date(selectedEvent.start.dateTime).toLocaleString()}

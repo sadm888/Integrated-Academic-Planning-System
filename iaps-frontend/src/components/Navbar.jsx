@@ -1,6 +1,9 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import Avatar from './Avatar';
+
+// Regex for any deep classroom/semester page
+const CLASSROOM_RE = /^\/classroom\//;
 
 function Navbar({ user, onLogout, dmUnreadCount = 0 }) {
   const location = useLocation();
@@ -8,6 +11,20 @@ function Navbar({ user, onLogout, dmUnreadCount = 0 }) {
 
   const isActive = (path) =>
     location.pathname === path || location.pathname.startsWith(path + '/');
+
+  // Save last classroom URL so we can restore it when navigating back
+  useEffect(() => {
+    if (CLASSROOM_RE.test(location.pathname)) {
+      localStorage.setItem('last_classroom_url', location.pathname);
+    }
+  }, [location.pathname]);
+
+  // "My Classrooms" smart destination:
+  // - When already inside a classroom page → go to /classrooms list
+  // - When outside (Settings, Calendar, etc.) → return to last visited classroom page
+  const classroomsHref = CLASSROOM_RE.test(location.pathname)
+    ? '/classrooms'
+    : (localStorage.getItem('last_classroom_url') || '/classrooms');
 
   return (
     <nav style={{
@@ -41,7 +58,7 @@ function Navbar({ user, onLogout, dmUnreadCount = 0 }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
         <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
           <NavLink
-            to="/classrooms"
+            to={classroomsHref}
             label="My Classrooms"
             active={isActive('/classrooms') || isActive('/classroom')}
           />

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { chatAPI, semesterAPI, classroomAPI, settingsAPI, documentAPI, BACKEND_URL } from '../services/api';
 import Avatar from '../components/Avatar';
 import { useSocket } from '../hooks/useSocket';
@@ -8,6 +8,7 @@ import { Image, Video, Music, FileText, Paperclip, Pin, Trash2, EyeOff, Eye, Ale
 import { FileTypeIcon, sizeLabel } from '../utils/fileUtils';
 import { formatTime, relativeTime, formatDate } from '../utils/timeUtils';
 import RemovedNotification from '../components/RemovedNotification';
+import '../styles/Classroom.css';
 
 // ── File category helpers ────────────────────────────────────────────────────
 function fileCategory(mime) {
@@ -690,7 +691,9 @@ function Chat({ user }) {
   const fileCount = messages.filter(m => m.file).length;
 
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - 56px)', background: 'var(--bg-color)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 56px)', background: 'var(--bg-color)' }}>
+
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
       {/* ── Left: Chat column ── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -701,12 +704,22 @@ function Chat({ user }) {
           padding: '14px 24px', display: 'flex', alignItems: 'center',
           gap: '16px', flexShrink: 0,
         }}>
-          <button
-            onClick={() => navigate(`/classroom/${classroomId}/semester/${semesterId}`)}
-            style={{ background: 'none', border: 'none', color: '#667eea', cursor: 'pointer', fontSize: '20px', lineHeight: 1, padding: 0 }}
-            title="Back to semester"
-          >←</button>
-
+          <Link
+            to={`/classroom/${classroomId}/semester/${semesterId}`}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '5px',
+              fontSize: '12px', color: 'var(--text-secondary)', textDecoration: 'none',
+              fontWeight: 600, flexShrink: 0,
+              padding: '5px 10px', borderRadius: '8px',
+              background: 'var(--bg-color)', border: '1px solid var(--border-color)',
+              transition: 'background 0.15s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--border-color)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'var(--bg-color)'}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            Dashboard
+          </Link>
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 700, fontSize: '17px', color: 'var(--text-primary)' }}>
               {semester?.name || 'Chat'}
@@ -1545,6 +1558,7 @@ function Chat({ user }) {
       )}
 
       <RemovedNotification data={removedNotification} />
+    </div>
     </div>
   );
 }

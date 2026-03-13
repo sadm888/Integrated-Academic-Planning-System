@@ -852,8 +852,14 @@ function ConnectedServicesSection() {
 // ─── main Settings page ──────────────────────────────────────────────────────
 
 function Settings({ user, onLogout, onProfileUpdate }) {
-  const [activeSection, setActiveSection] = useState('Profile');
+  const [activeSection, setActiveSection] = useState(() =>
+    sessionStorage.getItem('settings_section') || 'Profile'
+  );
   const [localUser, setLocalUser] = useState(user);
+
+  useEffect(() => {
+    sessionStorage.setItem('settings_section', activeSection);
+  }, [activeSection]);
 
   // Keep localUser in sync if parent updates user (e.g. after avatar upload)
   useEffect(() => { setLocalUser(user); }, [user]);

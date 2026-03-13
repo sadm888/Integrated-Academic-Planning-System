@@ -10,6 +10,32 @@
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
   --error-color: #dc3545;
   --success-color: #28a745;
+
+  /* Timetable cell type colors */
+  --cell-lecture-bg: #dbeafe; --cell-lecture-text: #1e40af; --cell-lecture-border: #93c5fd;
+  --cell-lab-bg: #ede9fe;     --cell-lab-text: #5b21b6;    --cell-lab-border: #c4b5fd;
+  --cell-tutorial-bg: #ccfbf1;--cell-tutorial-text: #065f46;--cell-tutorial-border: #6ee7b7;
+  --cell-free-bg: #f3f4f6;    --cell-free-text: #6b7280;   --cell-free-border: #e5e7eb;
+  --cell-lunch-bg: #fef3c7;   --cell-lunch-text: #92400e;  --cell-lunch-border: #fcd34d;
+  --cell-library-bg: #fce7f3; --cell-library-text: #831843;--cell-library-border: #f9a8d4;
+  --cell-cancel-bg: #fee2e2;  --cell-cancel-text: #991b1b; --cell-cancel-border: #fca5a5;
+  --cell-default-bg: #f3f4f6; --cell-default-text: #374151;--cell-default-border: #d1d5db;
+
+  /* AC event / holiday / exam colors */
+  --cell-holiday-bg: #fef3c7;     --cell-holiday-text: #92400e;   --cell-holiday-border: #f59e0b;
+  --cell-semexam-bg: #fff0eb;     --cell-semexam-text: #c2410c;   --cell-semexam-border: #f97316;
+  --cell-exam-bg: #ede9fe;        --cell-exam-text: #5b21b6;      --cell-exam-border: #a78bfa;
+  --cell-event-bg: #dbeafe;       --cell-event-text: #1e40af;     --cell-event-border: #93c5fd;
+  --cell-break-bg: #f0fdf4;       --cell-break-text: #166534;     --cell-break-border: #86efac;
+  --cell-submission-bg: #fdf4ff;  --cell-submission-text: #7e22ce;--cell-submission-border: #d8b4fe;
+
+  /* UI semantic colors */
+  --danger-color: #dc2626;
+  --warning-color: #d97706;
+  --info-color: #2563eb;
+  --input-border: #d1d5db;
+  --subtle-bg: #f3f4f6;
+  --unselected-text: #374151;
 }
 
 [data-theme="dark"] {
@@ -20,6 +46,32 @@
   --border-color: #2d4060;
   --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.35), 0 1px 2px -1px rgb(0 0 0 / 0.35);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.35), 0 4px 6px -4px rgb(0 0 0 / 0.35);
+
+  /* Timetable cell type colors — dark mode */
+  --cell-lecture-bg: #1e3a5f; --cell-lecture-text: #93c5fd; --cell-lecture-border: #1e40af;
+  --cell-lab-bg: #2d1b69;     --cell-lab-text: #c4b5fd;     --cell-lab-border: #5b21b6;
+  --cell-tutorial-bg: #052e20;--cell-tutorial-text: #6ee7b7;--cell-tutorial-border: #065f46;
+  --cell-free-bg: #252f3e;    --cell-free-text: #8ba4be;    --cell-free-border: #2d4060;
+  --cell-lunch-bg: #3d1a00;   --cell-lunch-text: #fcd34d;   --cell-lunch-border: #92400e;
+  --cell-library-bg: #3b0a28; --cell-library-text: #f9a8d4; --cell-library-border: #831843;
+  --cell-cancel-bg: #3b0a0a;  --cell-cancel-text: #fca5a5;  --cell-cancel-border: #991b1b;
+  --cell-default-bg: #252f3e; --cell-default-text: #8ba4be; --cell-default-border: #2d4060;
+
+  /* AC event / holiday / exam colors — dark mode */
+  --cell-holiday-bg: #3d2e00;     --cell-holiday-text: #fcd34d;   --cell-holiday-border: #d97706;
+  --cell-semexam-bg: #3d1500;     --cell-semexam-text: #fb923c;   --cell-semexam-border: #ea580c;
+  --cell-exam-bg: #2d1b69;        --cell-exam-text: #c4b5fd;      --cell-exam-border: #7c3aed;
+  --cell-event-bg: #1e3a5f;       --cell-event-text: #93c5fd;     --cell-event-border: #1e40af;
+  --cell-break-bg: #052e20;       --cell-break-text: #6ee7b7;     --cell-break-border: #065f46;
+  --cell-submission-bg: #2e1065;  --cell-submission-text: #d8b4fe;--cell-submission-border: #7e22ce;
+
+  /* UI semantic colors — dark mode */
+  --danger-color: #ef4444;
+  --warning-color: #f59e0b;
+  --info-color: #3b82f6;
+  --input-border: #2d4060;
+  --subtle-bg: #252f3e;
+  --unselected-text: #c8d6e8;
 }
 
 * {
@@ -168,3 +220,22 @@ h1 { letter-spacing: -0.02em; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 99px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+/* ── Print styles ───────────────────────────────────────────────────────── */
+@media print {
+  /* Hide navigation, controls, modals */
+  nav, .page-subnav, .modal-overlay, button, label[for],
+  .error-message, .success-message { display: none !important; }
+  /* Reset backgrounds for ink saving */
+  body { background: white !important; color: black !important; }
+  .classroom-container { padding: 10px !important; max-width: 100% !important; }
+  /* Force table to show all colours */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  /* No page break inside cells or event chips */
+  td, .classrooms-section { break-inside: avoid; }
+  /* Print title at top */
+  .classroom-container::before {
+    content: 'IAPS – Timetable / Academic Calendar';
+    display: block; font-size: 18px; font-weight: 700; margin-bottom: 12px;
+  }
+}

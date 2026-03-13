@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { semesterAPI, subjectAPI, documentAPI, todoAPI, scheduleAPI, classroomAPI, announcementAPI, linksAPI, BACKEND_URL } from '../services/api';
+import { semesterAPI, subjectAPI, documentAPI, todoAPI, classroomAPI, announcementAPI, linksAPI, timetableAPI, BACKEND_URL } from '../services/api';
 import '../styles/Classroom.css';
-import { Link as LinkIcon, Trash2, X, FileText, CalendarDays, Megaphone } from 'lucide-react';
+import { Link as LinkIcon, X, FileText, Megaphone, Clock, ClipboardList, Bell, BellOff, ChevronDown, ChevronRight } from 'lucide-react';
 
 function SemesterDetail({ user }) {
   const { classroomId, semesterId } = useParams();
@@ -18,8 +18,18 @@ function SemesterDetail({ user }) {
   const [showAddSubject, setShowAddSubject] = useState(false);
   const [subjectName, setSubjectName] = useState('');
   const [subjectCode, setSubjectCode] = useState('');
+  const [subjectCredits, setSubjectCredits] = useState('');
+  const [subjectFaculties, setSubjectFaculties] = useState('');
+  const [subjectDetails, setSubjectDetails] = useState('');
   const [subjectLoading, setSubjectLoading] = useState(false);
+  const [expandedSubjectId, setExpandedSubjectId] = useState(null);
+  const [editingSubjectId, setEditingSubjectId] = useState(null);
+  const [editSubjectDraft, setEditSubjectDraft] = useState({});
+  const [editSubjectSaving, setEditSubjectSaving] = useState(false);
+  // Multi-layer delete: step 1 = confirm intent, step 2 = type name to confirm
   const [confirmDeleteSubject, setConfirmDeleteSubject] = useState(null); // { id, name }
+  const [deleteSubjectConfirmStep, setDeleteSubjectConfirmStep] = useState(1); // 1 or 2
+  const [deleteSubjectTyped, setDeleteSubjectTyped] = useState('');
 
   // Documents
   const [documents, setDocuments] = useState([]);
@@ -54,15 +64,27 @@ function SemesterDetail({ user }) {
   const [confirmDeleteSemester, setConfirmDeleteSemester] = useState(false);
   const [deleteSemesterLoading, setDeleteSemesterLoading] = useState(false);
 
-  // Schedule
-  const [scheduleRequests, setScheduleRequests] = useState([]);
-  const [showPostScheduleModal, setShowPostScheduleModal] = useState(false);
-  const [scheduleTitle, setScheduleTitle] = useState('');
-  const [scheduleDescription, setScheduleDescription] = useState('');
-  const [scheduleEvents, setScheduleEvents] = useState([
-    { title: '', start_datetime: '', end_datetime: '', description: '', location: '' }
-  ]);
-  const [scheduleLoading, setScheduleLoading] = useState(false);
+  // Today's timetable classes
+  const [todayClasses, setTodayClasses] = useState([]);
+  const [todayDay, setTodayDay] = useState('');
+  const [todayLoading, setTodayLoading] = useState(false);
+
+  // Upcoming exams (next 7 days from academic calendar)
+  const [upcomingExams, setUpcomingExams] = useState([]);
+  const [expandedExam, setExpandedExam] = useState(null); // index
+  const [expandedClass, setExpandedClass] = useState(null); // index
+  const [notifPermission, setNotifPermission] = useState(() =>
+    typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
+  );
+  const [notifEnabled, setNotifEnabled] = useState(() =>
+    localStorage.getItem(`exam_notifs_enabled_${semesterId}`) !== 'false'
+  );
+
+  const toggleNotif = () => {
+    const next = !notifEnabled;
+    setNotifEnabled(next);
+    localStorage.setItem(`exam_notifs_enabled_${semesterId}`, next ? 'true' : 'false');
+  };
 
   useEffect(() => { loadAll(); }, [semesterId]);
 
@@ -77,9 +99,10 @@ function SemesterDetail({ user }) {
       setClassroom(classRes.data.classroom);
       loadDocuments();
       loadTodos();
-      loadSchedule();
       loadAnnouncements();
       loadLinks();
+      loadTodayClasses();
+      loadUpcomingExams();
     } catch (err) {
       setError('Failed to load semester');
     } finally {
@@ -126,6 +149,79 @@ function SemesterDetail({ user }) {
     }
   };
 
+  const loadTodayClasses = async () => {
+    setTodayLoading(true);
+    try {
+      const res = await timetableAPI.getToday(semesterId);
+      setTodayClasses(res.data.classes || []);
+      setTodayDay(res.data.day || '');
+    } catch (err) {
+      // non-critical — timetable may not be set up yet
+    } finally {
+      setTodayLoading(false);
+    }
+  };
+
+  function localDateKey(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  const loadUpcomingExams = async () => {
+    try {
+      const res = await timetableAPI.getAcademicCalendar(semesterId);
+      const acData = res.data.academic_calendar;
+      if (!acData) return;
+      const today = new Date();
+      const nextWeek = new Date(today);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      const todayKey = localDateKey(today);
+      const nextWeekKey = localDateKey(nextWeek);
+      const exams = (acData.events || []).filter(ev => {
+        if (!ev.date) return false;
+        if (!['Exam', 'Semester Exam'].includes(ev.type)) return false;
+        return ev.date >= todayKey && ev.date <= nextWeekKey;
+      }).sort((a, b) => a.date.localeCompare(b.date));
+      setUpcomingExams(exams);
+      // Schedule browser notifications for exams happening tomorrow or today
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && localStorage.getItem(`exam_notifs_enabled_${semesterId}`) !== 'false') {
+        const todayDate = localDateKey(new Date());
+        const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowDate = localDateKey(tomorrow);
+        exams.forEach(ev => {
+          if (ev.date === todayDate) {
+            new Notification(`Exam Today: ${ev.title}`, { body: ev.description || 'Good luck!', icon: '/favicon.ico' });
+          } else if (ev.date === tomorrowDate) {
+            new Notification(`Exam Tomorrow: ${ev.title}`, { body: ev.description || 'Prepare well!', icon: '/favicon.ico' });
+          }
+        });
+      }
+    } catch {
+      // non-critical
+    }
+  };
+
+  const requestNotifPermission = async () => {
+    if (typeof Notification === 'undefined') return;
+    const result = await Notification.requestPermission();
+    setNotifPermission(result);
+    if (result === 'granted') {
+      setNotifEnabled(true);
+      localStorage.setItem(`exam_notifs_enabled_${semesterId}`, 'true');
+      loadUpcomingExams();
+    }
+  };
+
+  // Countdown helper: returns "Today", "Tomorrow", "In N days"
+  const examCountdown = (dateStr) => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const examDate = new Date(y, m - 1, d);
+    const diff = Math.round((examDate - today) / 86400000);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Tomorrow';
+    return `In ${diff} days`;
+  };
+
   const handleAddLink = async (e) => {
     e.preventDefault();
     if (!newLinkLabel.trim() || !newLinkUrl.trim()) return;
@@ -148,15 +244,6 @@ function SemesterDetail({ user }) {
     }
   };
 
-  const loadSchedule = async () => {
-    try {
-      const res = await scheduleAPI.listForClassroom(classroomId);
-      setScheduleRequests(res.data.schedule_requests || []);
-    } catch (err) {
-      console.error('Failed to load schedule', err);
-    }
-  };
-
   // ── Subjects ────────────────────────────────────────────────────────────────
 
   const handleAddSubject = async (e) => {
@@ -169,13 +256,48 @@ function SemesterDetail({ user }) {
         semester_id: semesterId,
         name: subjectName.trim(),
         code: subjectCode.trim(),
+        credits: subjectCredits.trim(),
+        faculties: subjectFaculties.split(',').map(f => f.trim()).filter(Boolean),
+        details: subjectDetails.trim(),
       });
-      setSubjectName(''); setSubjectCode(''); setShowAddSubject(false);
+      setSubjectName(''); setSubjectCode(''); setSubjectCredits('');
+      setSubjectFaculties(''); setSubjectDetails(''); setShowAddSubject(false);
       const res = await semesterAPI.getDetail(semesterId);
       setSemester(res.data.semester);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to add subject');
     } finally { setSubjectLoading(false); }
+  };
+
+  const startEditSubject = (sub) => {
+    setEditSubjectDraft({
+      code: sub.code || '',
+      credits: sub.credits || '',
+      faculties: sub.faculties?.join(', ') || '',
+      details: sub.details || '',
+    });
+    setEditingSubjectId(sub.id);
+  };
+
+  const saveEditSubject = async (subjectId) => {
+    setEditSubjectSaving(true);
+    try {
+      const facultiesArr = editSubjectDraft.faculties.split(',').map(f => f.trim()).filter(Boolean);
+      await subjectAPI.update(subjectId, {
+        code: editSubjectDraft.code.trim(),
+        credits: editSubjectDraft.credits ? parseInt(editSubjectDraft.credits) : null,
+        faculties: facultiesArr,
+        details: editSubjectDraft.details.trim(),
+      });
+      // Refresh semester data to reflect changes
+      const res = await semesterAPI.getDetail(semesterId);
+      setSemester(res.data.semester);
+      setEditingSubjectId(null);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to save');
+    } finally {
+      setEditSubjectSaving(false);
+    }
   };
 
   const handleDeleteSubject = async (subjectId) => {
@@ -297,69 +419,6 @@ function SemesterDetail({ user }) {
     }
   };
 
-  // ── Schedule ─────────────────────────────────────────────────────────────────
-
-  const addScheduleEvent = () =>
-    setScheduleEvents(prev => [...prev, { title: '', start_datetime: '', end_datetime: '', description: '', location: '' }]);
-
-  const removeScheduleEvent = (idx) =>
-    setScheduleEvents(prev => prev.filter((_, i) => i !== idx));
-
-  const updateScheduleEvent = (idx, field, value) => {
-    setScheduleEvents(prev => {
-      const updated = [...prev];
-      updated[idx] = { ...updated[idx], [field]: value };
-      return updated;
-    });
-  };
-
-  const handlePostSchedule = async (e) => {
-    e.preventDefault();
-    setScheduleLoading(true);
-    try {
-      const events = scheduleEvents.map(ev => ({
-        title: ev.title,
-        start_datetime: new Date(ev.start_datetime).toISOString(),
-        end_datetime: new Date(ev.end_datetime).toISOString(),
-        description: ev.description,
-        location: ev.location,
-      }));
-      await scheduleAPI.create({
-        classroom_id: classroomId,
-        semester_id: semesterId,
-        title: scheduleTitle,
-        description: scheduleDescription,
-        events,
-      });
-      setSuccess('Schedule posted!');
-      setShowPostScheduleModal(false);
-      setScheduleTitle(''); setScheduleDescription('');
-      setScheduleEvents([{ title: '', start_datetime: '', end_datetime: '', description: '', location: '' }]);
-      loadSchedule();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to post schedule');
-    } finally { setScheduleLoading(false); }
-  };
-
-  const handlePullSchedule = async (requestId) => {
-    try {
-      await scheduleAPI.pullRequest(requestId);
-      setSuccess('Events added to your Google Calendar!');
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to pull to calendar. Make sure Google Calendar is connected.');
-    }
-  };
-
-  const handleDeleteSchedule = async (requestId) => {
-    if (!window.confirm('Delete this schedule?')) return;
-    try {
-      await scheduleAPI.deleteRequest(requestId);
-      setScheduleRequests(prev => prev.filter(r => r.id !== requestId));
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to delete schedule');
-    }
-  };
-
   // ── Delete Semester ──────────────────────────────────────────────────────────
 
   const handleDeleteSemester = async () => {
@@ -398,6 +457,18 @@ function SemesterDetail({ user }) {
   const subjects = semester.subjects || [];
   const completedCount = todos.filter(t => t.completed).length;
 
+  const subjectInputStyle = {
+    padding: '7px 10px', borderRadius: '7px',
+    border: '1.5px solid var(--border-color)',
+    fontSize: '13px', background: 'var(--bg-color)',
+    color: 'var(--text-primary)', outline: 'none',
+    width: '100%', boxSizing: 'border-box',
+  };
+  const detailLabelStyle = {
+    fontSize: '10px', color: 'var(--text-secondary)', fontWeight: 600,
+    textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px',
+  };
+
   return (
     <div className="classroom-container">
       {/* Header */}
@@ -423,17 +494,12 @@ function SemesterDetail({ user }) {
 
       {/* Sub-navbar */}
       <div className="page-subnav">
-        <button className="page-subnav-item" onClick={() => navigate(`/classroom/${classroomId}/semester/${semesterId}/chat`)}>
-          Chat
-        </button>
-        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/files`}>
-          Subjects
-        </Link>
-        {isCr && (
-          <button className="page-subnav-item accent" onClick={() => setShowPostScheduleModal(true)}>
-            Post Schedule
-          </button>
-        )}
+        <Link className="page-subnav-item accent" to={`/classroom/${classroomId}/semester/${semesterId}`}>Dashboard</Link>
+        <button className="page-subnav-item" onClick={() => navigate(`/classroom/${classroomId}/semester/${semesterId}/chat`)}>Chat</button>
+        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/files`}>Resources</Link>
+        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/marks`}>Marks</Link>
+        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/timetable`}>Timetable</Link>
+        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/academic-calendar`}>Academic Calendar</Link>
         <div className="page-subnav-spacer" />
         {isCr && (
           <button className="page-subnav-item danger" onClick={() => setConfirmDeleteSemester(true)}>
@@ -449,6 +515,415 @@ function SemesterDetail({ user }) {
       <div style={{ display: 'flex', gap: '30px', alignItems: 'flex-start' }}>
         {/* Left column */}
         <div style={{ flex: 1, minWidth: 0 }}>
+
+          {/* Notification Toggle Card */}
+          {notifPermission !== 'unsupported' && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '14px',
+              background: 'var(--card-bg)', border: '1px solid var(--border-color)',
+              borderRadius: '12px', padding: '14px 18px', marginBottom: '20px',
+            }}>
+              <div style={{
+                width: '38px', height: '38px', borderRadius: '10px', flexShrink: 0,
+                background: (notifPermission === 'granted' && notifEnabled) ? 'rgba(102,126,234,0.1)' : 'var(--bg-color)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                {(notifPermission === 'granted' && notifEnabled)
+                  ? <Bell size={18} strokeWidth={1.75} style={{ color: '#667eea' }} />
+                  : <BellOff size={18} strokeWidth={1.75} style={{ color: 'var(--text-secondary)' }} />
+                }
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>Exam Notifications</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                  {notifPermission === 'denied'
+                    ? <>Blocked by browser. <a href="https://support.google.com/chrome/answer/3220216" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary-color)', textDecoration: 'none', fontWeight: 600 }}>How to allow →</a></>
+                    : notifPermission === 'default'
+                      ? 'Get browser alerts for upcoming exams.'
+                      : notifEnabled
+                        ? 'Alerts on for today/tomorrow exams.'
+                        : 'Notifications paused. Toggle on to re-enable.'}
+                </div>
+              </div>
+              {notifPermission === 'default' ? (
+                <button
+                  onClick={requestNotifPermission}
+                  style={{
+                    flexShrink: 0, padding: '6px 14px', borderRadius: '8px',
+                    border: 'none', background: '#667eea', color: 'white',
+                    fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  Enable
+                </button>
+              ) : notifPermission === 'denied' ? (
+                <span style={{
+                  flexShrink: 0, padding: '4px 10px', borderRadius: '8px',
+                  fontSize: '11px', fontWeight: 700,
+                  background: 'rgba(239,68,68,0.1)', color: '#ef4444',
+                }}>
+                  BLOCKED
+                </span>
+              ) : (
+                /* Left-right toggle switch */
+                <div
+                  onClick={toggleNotif}
+                  style={{
+                    flexShrink: 0, width: '44px', height: '24px', borderRadius: '12px',
+                    background: notifEnabled ? '#667eea' : 'var(--border-color)',
+                    position: 'relative', cursor: 'pointer',
+                    transition: 'background 0.2s',
+                  }}
+                >
+                  <div style={{
+                    position: 'absolute', top: '3px',
+                    left: notifEnabled ? '23px' : '3px',
+                    width: '18px', height: '18px', borderRadius: '50%',
+                    background: 'white',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                    transition: 'left 0.2s',
+                  }} />
+                </div>
+              )}
+            </div>
+          )}
+          {notifPermission === 'granted' && (
+            <div style={{ marginTop: '-14px', marginBottom: '20px', paddingLeft: '4px' }}>
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                To fully revoke browser permission: click the{' '}
+                <strong style={{ fontWeight: 600 }}>lock icon</strong> in your address bar → Notifications → Block.
+              </span>
+            </div>
+          )}
+
+          {/* Upcoming Exams Widget */}
+          {upcomingExams.length > 0 && (
+            <div className="classrooms-section" style={{ marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '16px' }}>
+                  <ClipboardList size={16} strokeWidth={1.75} color="var(--primary-color)" />
+                  Upcoming Exams
+                  <span style={{ fontSize: '12px', fontWeight: 400, color: 'var(--text-secondary)' }}>· next 7 days</span>
+                </h2>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <Link to={`/classroom/${classroomId}/semester/${semesterId}/academic-calendar`} style={{ fontSize: '12px', color: 'var(--primary-color)', textDecoration: 'none', fontWeight: 600 }}>
+                    Full Calendar →
+                  </Link>
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {upcomingExams.map((ex, i) => {
+                  const isSemExam = ex.type === 'Semester Exam';
+                  const isOpen = expandedExam === i;
+                  const countdown = examCountdown(ex.date);
+                  const isUrgent = countdown === 'Today' || countdown === 'Tomorrow';
+                  return (
+                    <div key={i} style={{
+                      borderRadius: '10px',
+                      background: isSemExam ? 'var(--cell-semexam-bg)' : 'var(--cell-exam-bg)',
+                      border: `1.5px solid ${isSemExam ? 'var(--cell-semexam-border)' : 'var(--cell-exam-border)'}`,
+                      overflow: 'hidden',
+                    }}>
+                      <div
+                        onClick={() => setExpandedExam(isOpen ? null : i)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '12px',
+                          padding: '10px 14px', cursor: 'pointer',
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ margin: 0, fontSize: '13px', fontWeight: 700, color: isSemExam ? 'var(--cell-semexam-text)' : 'var(--cell-exam-text)' }}>
+                            {ex.title}
+                          </p>
+                          {ex.start_time && (
+                            <p style={{ margin: 0, fontSize: '11px', color: isSemExam ? 'var(--cell-semexam-text)' : 'var(--cell-exam-text)', opacity: 0.8, marginTop: '2px' }}>
+                              {ex.start_time}{ex.end_time ? `–${ex.end_time}` : ''}
+                            </p>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: isSemExam ? 'var(--cell-semexam-text)' : 'var(--cell-exam-text)' }}>
+                            {new Date(ex.date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
+                          </span>
+                          <span style={{
+                            fontSize: '10px', padding: '2px 7px', borderRadius: '4px', fontWeight: 800,
+                            background: isUrgent ? (isSemExam ? 'var(--cell-semexam-text)' : 'var(--cell-exam-text)') : (isSemExam ? 'var(--cell-semexam-border)' : 'var(--cell-exam-border)'),
+                            color: isUrgent ? (isSemExam ? 'var(--cell-semexam-bg)' : 'var(--cell-exam-bg)') : (isSemExam ? 'var(--cell-semexam-text)' : 'var(--cell-exam-text)'),
+                          }}>
+                            {countdown}
+                          </span>
+                        </div>
+                        <span style={{ fontSize: '12px', color: isSemExam ? 'var(--cell-semexam-text)' : 'var(--cell-exam-text)', opacity: 0.6 }}>{isOpen ? '▲' : '▼'}</span>
+                      </div>
+                      {isOpen && (
+                        <div style={{ padding: '0 14px 12px', borderTop: `1px solid ${isSemExam ? 'var(--cell-semexam-border)' : 'var(--cell-exam-border)'}` }}>
+                          <p style={{ margin: '10px 0 4px', fontSize: '11px', fontWeight: 700, color: isSemExam ? 'var(--cell-semexam-text)' : 'var(--cell-exam-text)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            {isSemExam ? 'Semester Exam' : 'Exam'} · {new Date(ex.date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                          </p>
+                          {ex.description ? (
+                            <p style={{ margin: 0, fontSize: '13px', color: isSemExam ? 'var(--cell-semexam-text)' : 'var(--cell-exam-text)', opacity: 0.85, lineHeight: 1.5 }}>{ex.description}</p>
+                          ) : (
+                            <p style={{ margin: 0, fontSize: '12px', color: isSemExam ? 'var(--cell-semexam-text)' : 'var(--cell-exam-text)', opacity: 0.5, fontStyle: 'italic' }}>No description added.</p>
+                          )}
+                          {ex.end_date && ex.end_date !== ex.date && (
+                            <p style={{ margin: '6px 0 0', fontSize: '11px', color: isSemExam ? 'var(--cell-semexam-text)' : 'var(--cell-exam-text)', opacity: 0.7 }}>
+                              Ends: {new Date(ex.end_date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Today's Classes Widget */}
+          {(todayClasses.length > 0 || todayLoading) && (
+            <div className="classrooms-section" style={{ marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Clock size={18} strokeWidth={1.75} color="#667eea" />
+                  Today's Classes
+                  {todayDay && <span style={{ fontSize: '14px', fontWeight: 400, color: '#6b7280' }}>· {todayDay}</span>}
+                </h2>
+                <Link to={`/classroom/${classroomId}/semester/${semesterId}/timetable`} style={{ fontSize: '12px', color: '#667eea', textDecoration: 'none', fontWeight: 600 }}>
+                  Full Timetable →
+                </Link>
+              </div>
+              {todayLoading ? (
+                <p style={{ color: '#999', fontSize: '13px' }}>Loading...</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '300px', overflowY: 'auto', paddingRight: '4px' }}>
+                  {(() => {
+                    const filtered = todayClasses.filter(c => c.subject && !['Free', 'Lunch', 'Library', 'Break'].includes(c.type));
+                    // Merge consecutive identical classes (same subject/teacher/room/type/status)
+                    const merged = [];
+                    for (const cls of filtered) {
+                      const prev = merged[merged.length - 1];
+                      const sameClass = prev &&
+                        prev.subject === cls.subject &&
+                        prev.teacher === cls.teacher &&
+                        prev.room === cls.room &&
+                        prev.type === cls.type &&
+                        prev.status === cls.status;
+                      if (sameClass) {
+                        // Extend the time range: keep start from prev, take end from current
+                        const prevEnd = prev.slot.includes('-') ? prev.slot.split('-')[0] : prev.slot;
+                        const curEnd = cls.slot.includes('-') ? cls.slot.split('-')[1] : cls.slot;
+                        prev.slot = prevEnd + '-' + curEnd;
+                      } else {
+                        merged.push({ ...cls });
+                      }
+                    }
+                    return merged;
+                  })().map((cls, i) => {
+                    const isCancelled = cls.status === 'cancelled';
+                    const isOpen = expandedClass === i;
+                    const hasDetail = cls.override_reason || cls.notes || cls.rescheduled_time;
+                    return (
+                      <div key={i} style={{
+                        borderRadius: '8px',
+                        background: isCancelled ? 'var(--cell-cancel-bg)' : 'var(--bg-color)',
+                        border: `1px solid ${isCancelled ? 'var(--cell-cancel-border)' : 'var(--border-color)'}`,
+                        overflow: 'hidden',
+                      }}>
+                        <div
+                          onClick={() => setExpandedClass(isOpen ? null : i)}
+                          style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', cursor: 'pointer' }}
+                        >
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 500, whiteSpace: 'nowrap', minWidth: '80px' }}>
+                            {cls.slot}
+                          </span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <p style={{ margin: 0, fontSize: '13px', fontWeight: 600, color: isCancelled ? 'var(--cell-cancel-text)' : 'var(--text-primary)', textDecoration: isCancelled ? 'line-through' : 'none' }}>
+                              {cls.subject}
+                            </p>
+                            {(cls.teacher || cls.room) && (
+                              <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                {[cls.teacher, cls.room].filter(Boolean).join(' · ')}
+                              </p>
+                            )}
+                          </div>
+                          {isCancelled && <span style={{ fontSize: '10px', fontWeight: 700, background: 'var(--cell-cancel-border)', color: 'var(--cell-cancel-text)', borderRadius: '4px', padding: '2px 6px', whiteSpace: 'nowrap' }}>CANCELLED</span>}
+                          {cls.status === 'modified' && <span style={{ fontSize: '10px', fontWeight: 700, background: 'var(--cell-holiday-border)', color: 'var(--cell-holiday-text)', borderRadius: '4px', padding: '2px 6px', whiteSpace: 'nowrap' }}>MODIFIED</span>}
+                          <span style={{ fontSize: '10px', color: 'var(--text-secondary)', opacity: 0.5 }}>{isOpen ? '▲' : '▼'}</span>
+                        </div>
+                        {isOpen && (
+                          <div style={{ padding: '0 12px 10px', borderTop: '1px solid var(--border-color)' }}>
+                            {cls.override_reason && <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>Note: {cls.override_reason}</p>}
+                            {cls.notes && <p style={{ margin: '6px 0 0', fontSize: '12px', color: 'var(--text-primary)' }}>{cls.notes}</p>}
+                            {cls.rescheduled_time && <p style={{ margin: '6px 0 0', fontSize: '12px', color: 'var(--warning-color)', fontWeight: 600 }}>Rescheduled to: {cls.rescheduled_time}</p>}
+                            {!hasDetail && <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--text-secondary)', fontStyle: 'italic', opacity: 0.6 }}>No additional notes.</p>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Subjects Widget */}
+          <div className="classrooms-section" style={{ marginBottom: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', gap: '8px' }}>
+              <h2 style={{ margin: 0, fontSize: '16px' }}>Subjects</h2>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <Link to={`/classroom/${classroomId}/semester/${semesterId}/marks`} style={{ fontSize: '12px', color: 'var(--primary-color)', textDecoration: 'none', fontWeight: 600 }}>
+                  Marks →
+                </Link>
+                {isCr && (
+                  <button onClick={() => setShowAddSubject(v => !v)} style={{
+                    padding: '5px 12px', borderRadius: '7px', border: 'none',
+                    background: '#667eea', color: 'white', fontSize: '12px',
+                    fontWeight: 600, cursor: 'pointer',
+                  }}>
+                    {showAddSubject ? 'Cancel' : '+ Add'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {showAddSubject && (
+              <form onSubmit={handleAddSubject} style={{ marginBottom: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <input value={subjectName} onChange={e => setSubjectName(e.target.value)}
+                    placeholder="Subject name *" required style={subjectInputStyle} />
+                  <input value={subjectCode} onChange={e => setSubjectCode(e.target.value)}
+                    placeholder="Code (e.g. IT250-2026)" style={subjectInputStyle} />
+                  <input value={subjectCredits} onChange={e => setSubjectCredits(e.target.value)}
+                    placeholder="Credits (e.g. 4)" style={subjectInputStyle} />
+                  <input value={subjectFaculties} onChange={e => setSubjectFaculties(e.target.value)}
+                    placeholder="Faculty (comma-separated)" style={subjectInputStyle} />
+                </div>
+                <textarea value={subjectDetails} onChange={e => setSubjectDetails(e.target.value)}
+                  placeholder="Course details / description (optional)" rows={2}
+                  style={{ ...subjectInputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+                <button type="submit" disabled={subjectLoading || !subjectName.trim()} style={{
+                  alignSelf: 'flex-start', padding: '7px 18px', borderRadius: '7px',
+                  border: 'none', background: '#667eea', color: 'white',
+                  fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+                  opacity: (subjectLoading || !subjectName.trim()) ? 0.5 : 1,
+                }}>
+                  {subjectLoading ? 'Adding...' : 'Add Subject'}
+                </button>
+              </form>
+            )}
+
+            {subjects.length === 0 ? (
+              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: 0 }}>
+                {isCr ? 'No subjects yet. Add the first one above.' : 'No subjects added yet.'}
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {subjects.map(sub => {
+                  const isOpen = expandedSubjectId === sub.id;
+                  return (
+                    <div key={sub.id} style={{
+                      background: 'var(--bg-color)', borderRadius: '8px',
+                      border: '1px solid var(--border-color)', overflow: 'hidden',
+                    }}>
+                      {/* Clickable header row */}
+                      <div
+                        onClick={() => setExpandedSubjectId(p => p === sub.id ? null : sub.id)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', cursor: 'pointer' }}
+                      >
+                        <span style={{ color: 'var(--text-secondary)', flexShrink: 0, display: 'flex' }}>
+                          {isOpen ? <ChevronDown size={14} strokeWidth={2} /> : <ChevronRight size={14} strokeWidth={2} />}
+                        </span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>{sub.name}</span>
+                          {sub.personal && <span style={{ marginLeft: '8px', fontSize: '11px', color: '#667eea' }}>Personal</span>}
+                        </div>
+                        {(isCr || sub.personal) && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setConfirmDeleteSubject({ id: sub.id, name: sub.name }); setDeleteSubjectConfirmStep(1); setDeleteSubjectTyped(''); }}
+                            style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: '4px', flexShrink: 0, display: 'flex', alignItems: 'center' }}
+                          >
+                            <X size={14} strokeWidth={2.5} />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Dropdown details */}
+                      {isOpen && (
+                        <div style={{ padding: '12px 14px 14px 36px', borderTop: '1px solid var(--border-color)' }}>
+                          {editingSubjectId === sub.id ? (
+                            /* ── Inline edit form ── */
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                                <div>
+                                  <div style={detailLabelStyle}>Code</div>
+                                  <input value={editSubjectDraft.code} onChange={e => setEditSubjectDraft(p => ({ ...p, code: e.target.value }))} placeholder="e.g. CS301" style={subjectInputStyle} />
+                                </div>
+                                <div>
+                                  <div style={detailLabelStyle}>Credits</div>
+                                  <input type="number" min="1" value={editSubjectDraft.credits} onChange={e => setEditSubjectDraft(p => ({ ...p, credits: e.target.value }))} placeholder="e.g. 4" style={subjectInputStyle} />
+                                </div>
+                                <div style={{ gridColumn: '1 / -1' }}>
+                                  <div style={detailLabelStyle}>Faculty (comma-separated)</div>
+                                  <input value={editSubjectDraft.faculties} onChange={e => setEditSubjectDraft(p => ({ ...p, faculties: e.target.value }))} placeholder="e.g. Dr. Smith, Prof. Jones" style={subjectInputStyle} />
+                                </div>
+                                <div style={{ gridColumn: '1 / -1' }}>
+                                  <div style={detailLabelStyle}>Details / Syllabus</div>
+                                  <textarea value={editSubjectDraft.details} onChange={e => setEditSubjectDraft(p => ({ ...p, details: e.target.value }))} placeholder="Course description, syllabus, topics…" rows={3} style={{ ...subjectInputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                <button onClick={() => saveEditSubject(sub.id)} disabled={editSubjectSaving} style={{ padding: '5px 14px', borderRadius: '6px', border: 'none', background: '#667eea', color: 'white', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                                  {editSubjectSaving ? 'Saving…' : 'Save'}
+                                </button>
+                                <button onClick={() => setEditingSubjectId(null)} style={{ padding: '5px 14px', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'var(--bg-color)', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* ── Read-only view ── */
+                            <>
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                                {(isCr || sub.personal) && (
+                                  <button onClick={e => { e.stopPropagation(); startEditSubject(sub); }} style={{ background: 'none', border: 'none', color: '#667eea', cursor: 'pointer', fontSize: '12px', fontWeight: 600, padding: 0 }}>
+                                    Edit
+                                  </button>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', marginBottom: sub.details ? '10px' : 0 }}>
+                                <div>
+                                  <div style={detailLabelStyle}>Code</div>
+                                  <div style={{ fontSize: '13px', fontWeight: 600 }}>{sub.code || '—'}</div>
+                                </div>
+                                <div>
+                                  <div style={detailLabelStyle}>Credits</div>
+                                  <div style={{ fontSize: '13px', fontWeight: 600 }}>{sub.credits || '—'}</div>
+                                </div>
+                                <div>
+                                  <div style={detailLabelStyle}>Faculty</div>
+                                  <div style={{ fontSize: '13px' }}>{sub.faculties?.length ? sub.faculties.join(', ') : '—'}</div>
+                                </div>
+                              </div>
+                              {sub.details && (
+                                <div style={{
+                                  background: 'var(--card-bg)', borderRadius: '6px',
+                                  padding: '8px 10px', fontSize: '12px', lineHeight: 1.65,
+                                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                  border: '1px solid var(--border-color)', color: 'var(--text-secondary)',
+                                }}>
+                                  {sub.details}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* Documents */}
           <div className="classrooms-section">
@@ -506,47 +981,6 @@ function SemesterDetail({ user }) {
                         cursor: 'pointer', padding: '2px', marginLeft: '8px', display: 'flex', alignItems: 'center',
                       }}><X size={15} strokeWidth={2} /></button>
                     )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Schedule Requests */}
-          <div className="classrooms-section">
-            <h2>Schedules</h2>
-            {scheduleRequests.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-secondary)' }}>
-                <CalendarDays size={28} strokeWidth={1.25} style={{ marginBottom: '8px', opacity: 0.4 }} />
-                <p style={{ fontSize: '14px', margin: 0 }}>No schedules posted yet.</p>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '420px', overflowY: 'auto', paddingRight: '2px' }}>
-                {scheduleRequests.map(req => (
-                  <div key={req.id} style={{
-                    background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px',
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        <h4 style={{ margin: 0, fontSize: '15px', color: 'var(--text-primary)' }}>{req.title}</h4>
-                        {req.description && <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#666' }}>{req.description}</p>}
-                        <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#9ca3af' }}>
-                          {req.events?.length || 0} event{(req.events?.length || 0) !== 1 ? 's' : ''} · Posted {new Date(req.created_at).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px', flexShrink: 0, marginLeft: '12px' }}>
-                        <button onClick={() => handlePullSchedule(req.id)} style={{
-                          background: '#4338ca', color: 'white', border: 'none', borderRadius: '6px',
-                          padding: '6px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
-                        }}>+ Calendar</button>
-                        {isCr && (
-                          <button onClick={() => handleDeleteSchedule(req.id)} style={{
-                            background: '#dc2626', color: 'white', border: 'none',
-                            borderRadius: '6px', padding: '6px 10px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
-                          }}>Delete</button>
-                        )}
-                      </div>
-                    </div>
                   </div>
                 ))}
               </div>
@@ -872,97 +1306,62 @@ function SemesterDetail({ user }) {
         </div>{/* end right column */}
       </div>
 
-      {/* Post Schedule Modal */}
-      {showPostScheduleModal && (
-        <div className="modal-overlay" onClick={() => setShowPostScheduleModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: '680px', width: '90%', maxHeight: '85vh', overflowY: 'auto' }}>
-            <h2>Post Schedule</h2>
-            <p style={{ color: '#666', marginBottom: '20px', fontSize: '14px' }}>
-              Post events for this semester. Students can pull them into Google Calendar.
-            </p>
-            <form onSubmit={handlePostSchedule}>
-              <div className="form-group">
-                <label>Schedule Title *</label>
-                <input type="text" value={scheduleTitle} onChange={(e) => setScheduleTitle(e.target.value)}
-                  placeholder="e.g., Week 3 Timetable" required disabled={scheduleLoading} />
-              </div>
-              <div className="form-group">
-                <label>Description</label>
-                <textarea value={scheduleDescription} onChange={(e) => setScheduleDescription(e.target.value)}
-                  placeholder="Optional notes" rows="2" disabled={scheduleLoading} />
-              </div>
-
-              <h3 style={{ fontSize: '15px', margin: '20px 0 10px', color: '#333' }}>Events ({scheduleEvents.length})</h3>
-
-              {scheduleEvents.map((ev, idx) => (
-                <div key={idx} style={{ background: 'var(--bg-color)', borderRadius: '8px', padding: '14px', marginBottom: '12px', border: '1px solid var(--border-color)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
-                    <strong style={{ fontSize: '13px', color: '#4338ca' }}>Event {idx + 1}</strong>
-                    {scheduleEvents.length > 1 && (
-                      <button type="button" onClick={() => removeScheduleEvent(idx)} style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}><X size={15} strokeWidth={2} /></button>
-                    )}
-                  </div>
-                  <div className="form-group">
-                    <label>Event Title *</label>
-                    <input type="text" value={ev.title} onChange={(e) => updateScheduleEvent(idx, 'title', e.target.value)} placeholder="e.g., OS Lecture" required disabled={scheduleLoading} />
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                    <div className="form-group">
-                      <label>Start *</label>
-                      <input type="datetime-local" value={ev.start_datetime} onChange={(e) => updateScheduleEvent(idx, 'start_datetime', e.target.value)} required disabled={scheduleLoading} />
-                    </div>
-                    <div className="form-group">
-                      <label>End *</label>
-                      <input type="datetime-local" value={ev.end_datetime} onChange={(e) => updateScheduleEvent(idx, 'end_datetime', e.target.value)} required disabled={scheduleLoading} />
-                    </div>
-                  </div>
-                  <div className="form-group">
-                    <label>Location</label>
-                    <input type="text" value={ev.location} onChange={(e) => updateScheduleEvent(idx, 'location', e.target.value)} placeholder="e.g., Room 301" disabled={scheduleLoading} />
-                  </div>
-                  <div className="form-group">
-                    <label>Description</label>
-                    <input type="text" value={ev.description} onChange={(e) => updateScheduleEvent(idx, 'description', e.target.value)} placeholder="Optional" disabled={scheduleLoading} />
-                  </div>
-                </div>
-              ))}
-
-              <button type="button" onClick={addScheduleEvent} disabled={scheduleLoading} style={{
-                width: '100%', padding: '10px', background: 'rgba(102,126,234,0.1)', color: '#667eea',
-                border: '2px dashed rgba(102,126,234,0.4)', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '14px', marginBottom: '20px',
-              }}>+ Add Another Event</button>
-
-              <div className="modal-buttons">
-                <button type="button" onClick={() => setShowPostScheduleModal(false)} disabled={scheduleLoading}>Cancel</button>
-                <button type="submit" disabled={scheduleLoading} style={{ background: '#4338ca' }}>
-                  {scheduleLoading ? 'Posting...' : 'Post Schedule'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Confirm Delete Subject Modal */}
+      {/* Confirm Delete Subject Modal — Multi-layer */}
       {confirmDeleteSubject && (
-        <div className="modal-overlay" onClick={() => setConfirmDeleteSubject(null)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '380px', textAlign: 'center' }}>
-            <div style={{ fontSize: '32px', marginBottom: '12px', display: 'flex', justifyContent: 'center' }}><Trash2 size={32} strokeWidth={1.75} color="#dc2626" /></div>
+        <div className="modal-overlay" onClick={() => { setConfirmDeleteSubject(null); setDeleteSubjectTyped(''); setDeleteSubjectConfirmStep(1); }}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px', textAlign: 'center' }}>
+            <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'center' }}><X size={32} strokeWidth={2} color="#dc2626" /></div>
             <h2 style={{ margin: '0 0 8px' }}>Delete subject?</h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', margin: '0 0 20px' }}>
-              "<strong>{confirmDeleteSubject.name}</strong>" and all its associated files will be permanently removed.
-            </p>
-            <div className="modal-buttons" style={{ justifyContent: 'center' }}>
-              <button type="button" onClick={() => setConfirmDeleteSubject(null)}>Cancel</button>
-              <button
-                type="button"
-                onClick={() => handleDeleteSubject(confirmDeleteSubject.id)}
-                style={{ background: '#dc2626', color: 'white' }}
-              >
-                Delete
-              </button>
-            </div>
+
+            {deleteSubjectConfirmStep === 1 ? (
+              <>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '14px', margin: '0 0 6px' }}>
+                  You are about to delete <strong>"{confirmDeleteSubject.name}"</strong>.
+                </p>
+                <p style={{ color: '#dc2626', fontSize: '13px', margin: '0 0 20px', fontWeight: 500 }}>
+                  All associated files and academic resources will be permanently removed.
+                </p>
+                <div className="modal-buttons" style={{ justifyContent: 'center' }}>
+                  <button type="button" onClick={() => { setConfirmDeleteSubject(null); setDeleteSubjectTyped(''); setDeleteSubjectConfirmStep(1); }}>Cancel</button>
+                  <button type="button" onClick={() => setDeleteSubjectConfirmStep(2)} style={{ background: '#dc2626', color: 'white' }}>
+                    Continue
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '14px', margin: '0 0 14px' }}>
+                  Type the subject name to confirm deletion:
+                </p>
+                <p style={{ fontWeight: 700, background: 'var(--bg-color)', borderRadius: '6px', padding: '6px 12px', fontSize: '13px', margin: '0 0 10px', color: 'var(--text-primary)', wordBreak: 'break-word' }}>
+                  {confirmDeleteSubject.name}
+                </p>
+                <input
+                  value={deleteSubjectTyped}
+                  onChange={e => setDeleteSubjectTyped(e.target.value)}
+                  placeholder="Type subject name…"
+                  autoFocus
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '8px 12px',
+                    borderRadius: '7px', border: '1.5px solid var(--border-color)',
+                    fontSize: '13px', background: 'var(--bg-color)', color: 'var(--text-primary)',
+                    outline: 'none', marginBottom: '20px',
+                    borderColor: deleteSubjectTyped === confirmDeleteSubject.name ? '#16a34a' : 'var(--border-color)',
+                  }}
+                />
+                <div className="modal-buttons" style={{ justifyContent: 'center' }}>
+                  <button type="button" onClick={() => { setConfirmDeleteSubject(null); setDeleteSubjectTyped(''); setDeleteSubjectConfirmStep(1); }}>Cancel</button>
+                  <button
+                    type="button"
+                    disabled={deleteSubjectTyped !== confirmDeleteSubject.name}
+                    onClick={() => { handleDeleteSubject(confirmDeleteSubject.id); setDeleteSubjectTyped(''); setDeleteSubjectConfirmStep(1); }}
+                    style={{ background: '#dc2626', color: 'white', opacity: deleteSubjectTyped !== confirmDeleteSubject.name ? 0.4 : 1 }}
+                  >
+                    Delete Forever
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -996,7 +1395,7 @@ function SemesterDetail({ user }) {
       {confirmDeleteSemester && (
         <div className="modal-overlay" onClick={() => setConfirmDeleteSemester(false)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px', textAlign: 'center' }}>
-            <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'center' }}><Trash2 size={36} strokeWidth={1.75} color="#dc2626" /></div>
+            <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'center' }}><X size={36} strokeWidth={2} color="#dc2626" /></div>
             <h2 style={{ margin: '0 0 8px' }}>Delete this semester?</h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: '14px', margin: '0 0 6px' }}>
               <strong>{semester.name}</strong> and all its subjects, files, and todos will be permanently removed.
@@ -1018,7 +1417,7 @@ function SemesterDetail({ user }) {
       {confirmDeleteAnnouncement && (
         <div className="modal-overlay" onClick={() => setConfirmDeleteAnnouncement(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '380px', textAlign: 'center' }}>
-            <div style={{ fontSize: '32px', marginBottom: '12px', display: 'flex', justifyContent: 'center' }}><Trash2 size={32} strokeWidth={1.75} color="#dc2626" /></div>
+            <div style={{ fontSize: '32px', marginBottom: '12px', display: 'flex', justifyContent: 'center' }}><X size={32} strokeWidth={2} color="#dc2626" /></div>
             <h2 style={{ margin: '0 0 8px' }}>Delete announcement?</h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: '14px', margin: '0 0 12px' }}>
               This cannot be undone.

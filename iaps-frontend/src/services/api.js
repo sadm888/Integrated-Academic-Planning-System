@@ -101,6 +101,23 @@ export const subjectAPI = {
   create: (data) => api.post('/subject/create', data),
   list: (semesterId) => api.get(`/subject/semester/${semesterId}/list`),
   delete: (subjectId) => api.delete(`/subject/${subjectId}`),
+  update: (subjectId, data) => api.patch(`/subject/${subjectId}`, data),
+};
+
+// Marks endpoints
+export const marksAPI = {
+  getStructure: (subjectId) => api.get(`/marks/structure/${subjectId}`),
+  saveStructure: (subjectId, data) => api.post(`/marks/structure/${subjectId}`, data),
+  getMyMarks: (subjectId) => api.get(`/marks/my/${subjectId}`),
+  saveMyMarks: (subjectId, data) => api.post(`/marks/my/${subjectId}`, data),
+  listAnalytics: (subjectId) => api.get(`/marks/analytics/${subjectId}`),
+  uploadAnalytics: (subjectId, formData, visibility = 'public') => {
+    formData.append('visibility', visibility);
+    return api.post(`/marks/analytics/${subjectId}`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  deleteAnalytics: (subjectId, fileId) => api.delete(`/marks/analytics/${subjectId}/${fileId}`),
+  updateAnalyticsVisibility: (subjectId, fileId, visibility) => api.post(`/marks/analytics/${subjectId}/${fileId}/visibility`, { visibility }),
+  analyticsFileUrl: (fileId) => `${BACKEND_URL}/api/marks/analytics/file/${fileId}?token=${localStorage.getItem('token') || ''}`,
 };
 
 // Google Calendar endpoints
@@ -285,6 +302,40 @@ export const dmAPI = {
   getMemberStats: (classroomId) => api.get(`/dm/${classroomId}/member-stats`),
   getUnreadBySender: (classroomId) => api.get(`/dm/${classroomId}/unread-by-sender`),
   getUnreadByClassroom: () => api.get('/dm/unread-by-classroom'),
+};
+
+// Timetable endpoints
+export const timetableAPI = {
+  // Base timetable
+  extract: (semesterId, formData) =>
+    api.post(`/timetable/semester/${semesterId}/extract`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  save: (semesterId, data) => api.post(`/timetable/semester/${semesterId}`, data),
+  get: (semesterId) => api.get(`/timetable/semester/${semesterId}`),
+  getWeek: (semesterId, date) =>
+    api.get(`/timetable/semester/${semesterId}/week`, { params: date ? { date } : {} }),
+  getToday: (semesterId) => api.get(`/timetable/semester/${semesterId}/today`),
+
+  // Overrides
+  addOverride: (semesterId, data) => api.post(`/timetable/semester/${semesterId}/override`, data),
+  deleteOverride: (semesterId, overrideId) =>
+    api.delete(`/timetable/semester/${semesterId}/override/${overrideId}`),
+  listOverrides: (semesterId) => api.get(`/timetable/semester/${semesterId}/overrides`),
+  pushToCalendar: (semesterId, data) =>
+    api.post(`/timetable/semester/${semesterId}/push-to-calendar`, data),
+
+  // Academic calendar
+  extractAcademicCalendar: (semesterId, formData) =>
+    api.post(`/timetable/semester/${semesterId}/academic-calendar/extract`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  saveAcademicCalendar: (semesterId, data) =>
+    api.post(`/timetable/semester/${semesterId}/academic-calendar`, data),
+  getAcademicCalendar: (semesterId) =>
+    api.get(`/timetable/semester/${semesterId}/academic-calendar`),
+  pushAcademicCalendar: (semesterId) =>
+    api.post(`/timetable/semester/${semesterId}/academic-calendar/push-to-calendar`),
 };
 
 export default api;
