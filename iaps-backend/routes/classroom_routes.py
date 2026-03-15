@@ -69,8 +69,8 @@ def create_classroom():
             'created_by': user_oid,
             'members': [user_oid],
             'join_requests': [],
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow()
+            'created_at': datetime.now(timezone.utc),
+            'updated_at': datetime.now(timezone.utc)
         }
 
         result = db.classrooms.insert_one(classroom)
@@ -101,7 +101,7 @@ def create_classroom():
             'session': sem_session,
             'cr_ids': [user_id],
             'is_active': True,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
             'archived_at': None
         }
         sem_result = db.semesters.insert_one(first_semester)
@@ -156,7 +156,7 @@ def request_join():
         # Add join request
         join_request = {
             'user_id': user_oid,
-            'requested_at': datetime.utcnow()
+            'requested_at': datetime.now(timezone.utc)
         }
 
         db.classrooms.update_one(
@@ -209,7 +209,7 @@ def approve_request(classroom_id):
             {
                 '$pull': {'join_requests': {'user_id': target_oid}},
                 '$addToSet': {'members': target_oid},
-                '$set': {'updated_at': datetime.utcnow()}
+                '$set': {'updated_at': datetime.now(timezone.utc)}
             }
         )
 
@@ -466,7 +466,7 @@ def leave_classroom(classroom_id):
             {'_id': classroom['_id']},
             {
                 '$pull': {'members': user_oid},
-                '$set': {'updated_at': datetime.utcnow()}
+                '$set': {'updated_at': datetime.now(timezone.utc)}
             }
         )
 
@@ -532,7 +532,7 @@ def quit_cr(classroom_id, semester_id):
                     'type': 'cr_stepped_down',
                     'message': f'{quitter_name} stepped down as CR in {semester["name"]}. You are now the sole CR.',
                     'read': False,
-                    'created_at': datetime.utcnow(),
+                    'created_at': datetime.now(timezone.utc),
                 })
         except Exception:
             pass
@@ -659,7 +659,7 @@ def remove_member(classroom_id):
             {'_id': classroom['_id']},
             {
                 '$pull': {'members': target_oid},
-                '$set': {'updated_at': datetime.utcnow()}
+                '$set': {'updated_at': datetime.now(timezone.utc)}
             }
         )
 
@@ -746,7 +746,7 @@ def remove_member_avatar(classroom_id):
                 'profile_picture': None,
                 'photo_removed_reason': reason,
                 'photo_removed_by': cr_name,
-                'photo_removed_at': datetime.utcnow()
+                'photo_removed_at': datetime.now(timezone.utc)
             }}
         )
 
@@ -833,7 +833,7 @@ def get_classroom_activity(classroom_id):
 
         # Recent announcements (last 7 days, max 10)
         from datetime import timedelta
-        seven_days_ago = datetime.utcnow() - timedelta(days=7)
+        seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
         raw_ann = list(db.announcements.find(
             {'semester_id': {'$in': semester_ids}, 'created_at': {'$gte': seven_days_ago}},
             sort=[('created_at', -1)],
@@ -854,7 +854,7 @@ def get_classroom_activity(classroom_id):
         unread_chat = {}
         for sid in semester_ids:
             last_read = db.chat_read_status.find_one({'user_id': user_id, 'semester_id': sid})
-            from datetime import datetime as _dt
+            from datetime import datetime as _dt, timezone
             cutoff = last_read['last_read_at'] if last_read else _dt(1970, 1, 1)
             count = db.chat_messages.count_documents({
                 'semester_id': sid,

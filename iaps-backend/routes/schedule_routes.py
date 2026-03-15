@@ -1,17 +1,13 @@
 from flask import Blueprint, request, jsonify
 from flask_cors import cross_origin
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 import logging
 
-from middleware import token_required, is_member_of_classroom
+from middleware import token_required, is_member_of_classroom, is_cr_of as _is_cr_of
 
 schedule_bp = Blueprint('schedule', __name__, url_prefix='/api/schedule')
 logger = logging.getLogger(__name__)
-
-
-def _is_cr_of(semester, user_id):
-    return user_id in [str(c) for c in semester.get('cr_ids', [])]
 
 
 @schedule_bp.route('/create', methods=['POST'])
@@ -80,7 +76,7 @@ def create_schedule():
             'title': title,
             'description': description,
             'events': parsed_events,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
             'pulled_by': [],
         }
 

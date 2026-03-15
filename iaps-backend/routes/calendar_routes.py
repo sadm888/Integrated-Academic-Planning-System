@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, redirect
 from flask_cors import cross_origin
-from datetime import datetime
+from datetime import datetime, timezone
 import jwt
 import logging
 
@@ -9,6 +9,12 @@ from config import Config
 
 calendar_bp = Blueprint('calendar', __name__, url_prefix='/api/calendar')
 logger = logging.getLogger(__name__)
+
+# Calendar event color IDs for event types (Google Calendar color palette)
+_TYPE_COLOR_ID = {
+    'Lecture': '7', 'Lab': '3', 'Tutorial': '2',
+    'Assignment': '6', 'Exam': '11', 'Holiday': '10',
+}
 
 
 @calendar_bp.route('/auth-url', methods=['GET'])
@@ -101,12 +107,12 @@ def oauth_callback():
             'access_token': credentials.token,
             'refresh_token': credentials.refresh_token,
             'token_expiry': credentials.expiry,
-            'updated_at': datetime.utcnow(),
+            'updated_at': datetime.now(timezone.utc),
         }
 
         db.google_tokens.update_one(
             {'user_id': user_id},
-            {'$set': token_doc, '$setOnInsert': {'created_at': datetime.utcnow()}},
+            {'$set': token_doc, '$setOnInsert': {'created_at': datetime.now(timezone.utc)}},
             upsert=True
         )
 
@@ -240,14 +246,9 @@ def create_event():
         if not all([title, start_dt, end_dt]):
             return jsonify({'error': 'title, start_datetime, and end_datetime are required'}), 400
 
-        TYPE_COLOR_ID = {
-            'Lecture': '7', 'Lab': '3', 'Tutorial': '2',
-            'Assignment': '6', 'Exam': '11', 'Holiday': '10',
-        }
-
         event_body = format_event_for_google(title, start_dt, end_dt, description, location)
         if event_type:
-            event_body['colorId'] = TYPE_COLOR_ID.get(event_type, '1')
+            event_body['colorId'] = _TYPE_COLOR_ID.get(event_type, '1')
             event_body['extendedProperties'] = {
                 'private': {'iaps_type': event_type}
             }
@@ -281,10 +282,6 @@ def update_event(event_id):
         if err:
             return err
 
-        TYPE_COLOR_ID = {
-            'Lecture': '7', 'Lab': '3', 'Tutorial': '2',
-            'Assignment': '6', 'Exam': '11', 'Holiday': '10',
-        }
         event_body = {}
         if 'title' in data:
             event_body['summary'] = data['title']
@@ -299,7 +296,7 @@ def update_event(event_id):
         if 'event_type' in data:
             et = data['event_type']
             if et:
-                event_body['colorId'] = TYPE_COLOR_ID.get(et, '1')
+                event_body['colorId'] = _TYPE_COLOR_ID.get(et, '1')
                 event_body['extendedProperties'] = {'private': {'iaps_type': et}}
 
         updated = update_calendar_event(service, event_id, event_body)

@@ -1,18 +1,14 @@
 from flask import Blueprint, request, jsonify
 from flask_cors import cross_origin
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 import logging
 
-from middleware import token_required, is_member_of_classroom
+from middleware import token_required, is_member_of_classroom, is_cr_of
 
 semester_bp = Blueprint('semester', __name__, url_prefix='/api/semester')
 logger = logging.getLogger(__name__)
 
-
-def is_cr_of(semester, user_id):
-    """Check if user_id is in cr_ids of this semester"""
-    return str(user_id) in [str(c) for c in semester.get('cr_ids', [])]
 
 
 @semester_bp.route('/create', methods=['POST'])
@@ -58,7 +54,7 @@ def create_semester():
         # Archive all currently active semesters for this classroom
         db.semesters.update_many(
             {'classroom_id': classroom_id, 'is_active': True},
-            {'$set': {'is_active': False, 'archived_at': datetime.utcnow()}}
+            {'$set': {'is_active': False, 'archived_at': datetime.now(timezone.utc)}}
         )
 
         # Create new semester with the current user as CR
@@ -70,7 +66,7 @@ def create_semester():
             'session': session,
             'cr_ids': [user_id],
             'is_active': True,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
             'archived_at': None
         }
 
@@ -392,7 +388,7 @@ def nominate_cr(semester_id):
                 'nominated_user_id': nominee_id,
                 'nominated_by_user_id': user_id,
                 'nomination_type': 'transfer',
-                'created_at': datetime.utcnow()
+                'created_at': datetime.now(timezone.utc)
             },
             upsert=True
         )
@@ -449,7 +445,7 @@ def nominate_add_cr(semester_id):
                 'nominated_by_user_id': user_id,
                 'nominated_by': nominator_name,
                 'nomination_type': 'add_co_cr',
-                'created_at': datetime.utcnow()
+                'created_at': datetime.now(timezone.utc)
             },
             upsert=True
         )
@@ -511,7 +507,7 @@ def accept_cr_nomination(semester_id):
                 'type': 'cr_accepted',
                 'message': msg,
                 'read': False,
-                'created_at': datetime.utcnow(),
+                'created_at': datetime.now(timezone.utc),
             })
             from routes.chat_routes import emit_to_user
             emit_to_user(nominator_id, 'cr_transfer_result', {
@@ -560,7 +556,7 @@ def decline_cr_nomination(semester_id):
                 'type': 'cr_declined',
                 'message': f'{nominee_name} declined the CR role. You remain CR.',
                 'read': False,
-                'created_at': datetime.utcnow(),
+                'created_at': datetime.now(timezone.utc),
             })
             from routes.chat_routes import emit_to_user
             emit_to_user(nominator_id, 'cr_transfer_result', {
@@ -649,7 +645,7 @@ def add_link(semester_id):
             return jsonify({'error': 'Semester not found'}), 404
         if not is_cr_of(semester, user_id):
             return jsonify({'error': 'Only a CR can add links'}), 403
-        link = {'semester_id': semester_id, 'label': label, 'url': url, 'created_by': user_id, 'created_at': datetime.utcnow()}
+        link = {'semester_id': semester_id, 'label': label, 'url': url, 'created_by': user_id, 'created_at': datetime.now(timezone.utc)}
         result = db.semester_links.insert_one(link)
         return jsonify({'message': 'Link added', 'link': {'id': str(result.inserted_id), 'label': label, 'url': url, 'created_at': link['created_at'].isoformat()}}), 201
     except Exception as e:

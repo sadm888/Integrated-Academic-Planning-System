@@ -48,6 +48,11 @@ def is_member_of_classroom(classroom, user_id):
     return user_oid in classroom.get('members', [])
 
 
+def is_cr_of(semester, user_id):
+    """Check if user_id is a CR of the given semester document."""
+    return str(user_id) in [str(c) for c in semester.get('cr_ids', [])]
+
+
 def is_cr_of_semester(db, semester_id, user_id):
     """Check if user is a CR of the given semester"""
     semester = db.semesters.find_one({'_id': ObjectId(semester_id)})

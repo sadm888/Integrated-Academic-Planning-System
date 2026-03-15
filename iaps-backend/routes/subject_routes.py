@@ -1,21 +1,17 @@
 import os
 from flask import Blueprint, request, jsonify
 from flask_cors import cross_origin
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 import logging
 
-from middleware import token_required, is_member_of_classroom
+from middleware import token_required, is_member_of_classroom, is_cr_of
 
 UPLOAD_DIR = os.path.join(os.getcwd(), 'uploads', 'academics')
 
 subject_bp = Blueprint('subject', __name__, url_prefix='/api/subject')
 logger = logging.getLogger(__name__)
 
-
-def is_cr_of(semester, user_id):
-    """Check if user_id is in cr_ids of this semester"""
-    return str(user_id) in [str(c) for c in semester.get('cr_ids', [])]
 
 
 @subject_bp.route('/create', methods=['POST'])
@@ -84,7 +80,7 @@ def create_subject():
             'details': details,
             'personal': is_personal,
             'created_by': user_id,
-            'created_at': datetime.utcnow()
+            'created_at': datetime.now(timezone.utc)
         }
 
         result = db.subjects.insert_one(subject)

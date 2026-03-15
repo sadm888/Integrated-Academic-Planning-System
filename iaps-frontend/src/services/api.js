@@ -3,6 +3,12 @@ import axios from 'axios';
 export const BACKEND_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 const API_BASE_URL = BACKEND_URL + '/api';
 
+/** Build an authenticated file URL (token passed as query param for direct browser fetch). */
+function fileUrl(path) {
+  const token = localStorage.getItem('token') || '';
+  return `${BACKEND_URL}/api/${path}?token=${encodeURIComponent(token)}`;
+}
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -117,7 +123,7 @@ export const marksAPI = {
   },
   deleteAnalytics: (subjectId, fileId) => api.delete(`/marks/analytics/${subjectId}/${fileId}`),
   updateAnalyticsVisibility: (subjectId, fileId, visibility) => api.post(`/marks/analytics/${subjectId}/${fileId}/visibility`, { visibility }),
-  analyticsFileUrl: (fileId) => `${BACKEND_URL}/api/marks/analytics/file/${fileId}?token=${localStorage.getItem('token') || ''}`,
+  analyticsFileUrl: (fileId) => fileUrl(`marks/analytics/file/${fileId}`),
 };
 
 // Google Calendar endpoints
@@ -144,10 +150,7 @@ export const chatAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  getFileUrl: (messageId) => {
-    const token = localStorage.getItem('token') || '';
-    return `${BACKEND_URL}/api/chat/file/${messageId}?token=${encodeURIComponent(token)}`;
-  },
+  getFileUrl: (messageId) => fileUrl(`chat/file/${messageId}`),
   deleteMessage: (semesterId, messageId, mode = '') =>
     api.delete(`/chat/${semesterId}/messages/${messageId}`, { params: mode ? { mode } : {} }),
   warnUser: (semesterId, userId, reason, messageId, warnType = 'chat') => api.post(`/chat/${semesterId}/warn`, { user_id: userId, reason, message_id: messageId, warn_type: warnType }),
@@ -186,10 +189,7 @@ export const settingsAPI = {
     if (label) fd.append('label', label);
     return api.post('/settings/personal-docs/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
   },
-  getPersonalDocUrl: (docId) => {
-    const token = localStorage.getItem('token') || '';
-    return `${BACKEND_URL}/api/settings/personal-docs/${docId}?token=${encodeURIComponent(token)}`;
-  },
+  getPersonalDocUrl: (docId) => fileUrl(`settings/personal-docs/${docId}`),
   deletePersonalDoc: (docId) => api.delete(`/settings/personal-docs/${docId}`),
   verifyPassword: (password) => api.post('/settings/verify-password', { password }),
 };
@@ -268,10 +268,7 @@ export const academicAPI = {
   deleteResource: (semesterId, resourceId) =>
     api.delete(`/academics/${semesterId}/resources/${resourceId}`),
   getChatFiles: (semesterId) => api.get(`/academics/${semesterId}/chat-files`),
-  getFileUrl: (resourceId) => {
-    const token = localStorage.getItem('token') || '';
-    return `${BACKEND_URL}/api/academics/file/${resourceId}?token=${encodeURIComponent(token)}`;
-  },
+  getFileUrl: (resourceId) => fileUrl(`academics/file/${resourceId}`),
 };
 
 // DM (direct message) endpoints
@@ -295,10 +292,7 @@ export const dmAPI = {
   getUnreadCount: () => api.get('/dm/unread-count'),
   deleteMessage: (classroomId, messageId, mode = '') =>
     api.delete(`/dm/${classroomId}/messages/${messageId}`, { params: mode ? { mode } : {} }),
-  getDmFileUrl: (messageId) => {
-    const token = localStorage.getItem('token') || '';
-    return `${BACKEND_URL}/api/dm/file/${messageId}?token=${encodeURIComponent(token)}`;
-  },
+  getDmFileUrl: (messageId) => fileUrl(`dm/file/${messageId}`),
   getMemberStats: (classroomId) => api.get(`/dm/${classroomId}/member-stats`),
   getUnreadBySender: (classroomId) => api.get(`/dm/${classroomId}/unread-by-sender`),
   getUnreadByClassroom: () => api.get('/dm/unread-by-classroom'),

@@ -1,12 +1,12 @@
 from flask import Blueprint, request, jsonify, send_file
 from flask_cors import cross_origin
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 from werkzeug.utils import secure_filename
 import os
 import logging
 
-from middleware import token_required, is_member_of_classroom
+from middleware import token_required, is_member_of_classroom, is_cr_of
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +22,6 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-
-def is_cr_of(semester, user_id):
-    return str(user_id) in [str(c) for c in semester.get('cr_ids', [])]
 
 
 @document_bp.route('/upload', methods=['POST'])
@@ -67,7 +64,7 @@ def upload_document():
             return jsonify({'error': 'Semester not found'}), 404
 
         filename = secure_filename(file.filename)
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         unique_filename = f"{timestamp}_{user_id}_{filename}"
         file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
 
@@ -84,7 +81,7 @@ def upload_document():
             'mime_type': file.mimetype or 'application/octet-stream',
             'use_for_ai': use_for_ai,
             'file_size': os.path.getsize(file_path),
-            'created_at': datetime.utcnow()
+            'created_at': datetime.now(timezone.utc)
         }
 
         result = db.documents.insert_one(doc_metadata)

@@ -7,19 +7,16 @@ Collections used:
 """
 from flask import Blueprint, request, jsonify
 from flask_cors import cross_origin
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from bson import ObjectId
 import logging
 
-from middleware import token_required, is_member_of_classroom
+from middleware import token_required, is_member_of_classroom, is_cr_of as _is_cr
 
 timetable_bp = Blueprint('timetable', __name__, url_prefix='/api/timetable')
 logger = logging.getLogger(__name__)
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
-
-def _is_cr(semester, user_id):
-    return str(user_id) in [str(c) for c in semester.get('cr_ids', [])]
 
 
 def _get_semester_and_check(db, semester_id, user_id):
@@ -255,7 +252,7 @@ def save_timetable(semester_id):
         if not days or not time_slots or not grid:
             return jsonify({'error': 'days, time_slots, and grid are required'}), 400
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         existing = db.timetables.find_one({'semester_id': semester_id})
 
         if existing:
@@ -580,7 +577,7 @@ def add_override(semester_id):
             'reason': data.get('reason', '').strip(),
             'created_by': user_id,
             'created_by_name': cr_name,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
         }
 
         result = db.timetable_overrides.insert_one(override_doc)
@@ -608,7 +605,7 @@ def add_override(semester_id):
                 'username': cr_name,
                 'text': f"[TIMETABLE UPDATE] {notif_msg}",
                 'is_system': True,
-                'created_at': datetime.utcnow(),
+                'created_at': datetime.now(timezone.utc),
                 'files': [],
             }
             db.messages.insert_one(chat_msg)
@@ -1000,7 +997,7 @@ def save_academic_calendar(semester_id):
         semester_start = data.get('semester_start')
         semester_end = data.get('semester_end')
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         existing = db.academic_calendars.find_one({'semester_id': semester_id})
 
         cal_doc = {
@@ -1061,7 +1058,7 @@ def save_academic_calendar(semester_id):
                         'created_by': user_id,
                         'created_by_name': 'Academic Calendar',
                         'is_holiday': True,
-                        'created_at': datetime.utcnow(),
+                        'created_at': datetime.now(timezone.utc),
                     })
 
         return jsonify({
@@ -1105,7 +1102,7 @@ def get_academic_calendar(semester_id):
                 'semester_start': doc.get('semester_start'),
                 'semester_end': doc.get('semester_end'),
                 'events': doc.get('events', []),
-                'updated_at': doc.get('updated_at', doc.get('created_at', datetime.utcnow())).isoformat(),
+                'updated_at': doc.get('updated_at', doc.get('created_at', datetime.now(timezone.utc))).isoformat(),
             },
             'is_cr': is_cr,
         }), 200

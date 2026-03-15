@@ -12,7 +12,7 @@ Socket: connect / disconnect / join_room / send_message
 
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Blueprint, request, jsonify, send_file
 from flask_cors import cross_origin
@@ -190,7 +190,7 @@ def handle_send_message(data):
         'full_name': user_data.get('full_name', ''),
         'text': text,
         'file': None,
-        'created_at': datetime.utcnow(),
+        'created_at': datetime.now(timezone.utc),
     }
     result = db.chat_messages.insert_one(msg)
     msg['_id'] = result.inserted_id
@@ -281,7 +281,7 @@ def upload_file(semester_id):
 
         original_name = file.filename or 'file'
         safe_name = secure_filename(original_name) or 'file'
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         stored_name = f"{timestamp}_{user_id}_{safe_name}"
         file_path = os.path.join(CHAT_UPLOAD_DIR, stored_name)
         file.save(file_path)
@@ -300,7 +300,7 @@ def upload_file(semester_id):
                 'mime_type': mime_type,
                 'size': size,
             },
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
         }
         result = db.chat_messages.insert_one(msg)
         msg['_id'] = result.inserted_id
@@ -418,7 +418,7 @@ def warn_user(semester_id):
             'warned_name': target_name,
             'semester_id': semester_id,
             'shown': False,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
         })
 
         # Send live socket notification too (for immediate display if user is online)
@@ -551,7 +551,7 @@ def mark_read(semester_id):
             return jsonify({'error': 'Not a member'}), 403
         db.chat_read_status.update_one(
             {'user_id': user_id, 'semester_id': semester_id},
-            {'$set': {'last_read_at': datetime.utcnow()}},
+            {'$set': {'last_read_at': datetime.now(timezone.utc)}},
             upsert=True,
         )
         return jsonify({'message': 'Marked as read'}), 200

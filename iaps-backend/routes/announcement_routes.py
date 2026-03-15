@@ -1,10 +1,10 @@
 from flask import Blueprint, request, jsonify
 from flask_cors import cross_origin
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 import logging
 
-from middleware import token_required, is_member_of_classroom
+from middleware import token_required, is_member_of_classroom, is_cr_of as _is_cr
 
 announcement_bp = Blueprint('announcement', __name__, url_prefix='/api/announcement')
 logger = logging.getLogger(__name__)
@@ -22,10 +22,6 @@ def _get_semester_and_classroom(db, semester_id, user_id):
         return semester, classroom
     except Exception:
         return None, None
-
-
-def _is_cr(semester, user_id):
-    return user_id in [str(c) for c in semester.get('cr_ids', [])]
 
 
 @announcement_bp.route('/semester/<semester_id>', methods=['GET'])
@@ -89,7 +85,7 @@ def create_announcement(semester_id):
             'text': text,
             'created_by': user_id,
             'created_by_name': creator_name,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
         }
         result = db.announcements.insert_one(doc)
 

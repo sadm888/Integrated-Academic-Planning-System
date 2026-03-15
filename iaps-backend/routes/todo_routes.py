@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_cors import cross_origin
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 import logging
 
@@ -48,8 +48,8 @@ def create_todo():
             'due_date': due_date,
             'completed': False,
             'created_by': user_id,
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow()
+            'created_at': datetime.now(timezone.utc),
+            'updated_at': datetime.now(timezone.utc)
         }
 
         result = db.todos.insert_one(todo)
@@ -145,7 +145,7 @@ def toggle_todo(todo_id):
         new_value = not todo.get('completed', False)
         db.todos.update_one(
             {'_id': ObjectId(todo_id)},
-            {'$set': {'completed': new_value, 'updated_at': datetime.utcnow()}}
+            {'$set': {'completed': new_value, 'updated_at': datetime.now(timezone.utc)}}
         )
 
         return jsonify({

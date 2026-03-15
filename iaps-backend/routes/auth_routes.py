@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_cors import cross_origin
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
 import logging
@@ -18,7 +18,7 @@ def create_token(user_data):
         'user_id': str(user_data['_id']),
         'email': user_data['email'],
         'username': user_data.get('username', ''),
-        'exp': datetime.utcnow() + timedelta(days=7)
+        'exp': datetime.now(timezone.utc) + timedelta(days=7)
     }
     return jwt.encode(payload, SECRET_KEY, algorithm='HS256')
 
@@ -81,7 +81,7 @@ def signup():
             'department': department,
             'is_verified': False,
             'auth_method': 'email',
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
             'profile_picture': None
         }
 

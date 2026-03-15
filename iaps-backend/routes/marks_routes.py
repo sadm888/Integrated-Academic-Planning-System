@@ -14,7 +14,7 @@ REST:
 import os
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Blueprint, request, jsonify, send_file
 from flask_cors import cross_origin
@@ -127,7 +127,7 @@ def save_exam_structure(subject_id):
                     for e in exams
                 ],
                 'updated_by': user_id,
-                'updated_at': datetime.utcnow(),
+                'updated_at': datetime.now(timezone.utc),
             },
             upsert=True,
         )
@@ -221,7 +221,7 @@ def save_my_marks(subject_id):
                     for e in entries
                 ],
                 'grade': grade,
-                'updated_at': datetime.utcnow(),
+                'updated_at': datetime.now(timezone.utc),
             },
             upsert=True,
         )
@@ -333,7 +333,7 @@ def upload_analytics(subject_id):
             'size': size,
             'visibility': visibility,
             'uploaded_by': user_id,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
         }
         result = db.subject_analytics.insert_one(doc)
 

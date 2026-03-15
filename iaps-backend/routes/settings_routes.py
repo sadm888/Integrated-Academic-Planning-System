@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, send_file
 from flask_cors import cross_origin
 from flask_mail import Message
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from bson import ObjectId
@@ -28,7 +28,7 @@ def _create_token(user_data):
         'user_id': str(user_data['_id']),
         'email': user_data['email'],
         'username': user_data.get('username', ''),
-        'exp': datetime.utcnow() + timedelta(days=7)
+        'exp': datetime.now(timezone.utc) + timedelta(days=7)
     }
     return jwt.encode(payload, SECRET_KEY, algorithm='HS256')
 
@@ -103,8 +103,8 @@ def _store_otp(user_id, otp_type, otp, new_value=None):
         'type': otp_type,
         'userId': user_id,
         'newValue': new_value,
-        'expiresAt': datetime.utcnow() + timedelta(minutes=15),
-        'createdAt': datetime.utcnow()
+        'expiresAt': datetime.now(timezone.utc) + timedelta(minutes=15),
+        'createdAt': datetime.now(timezone.utc)
     })
 
 
@@ -119,7 +119,7 @@ def _verify_otp(user_id, otp_type, otp):
     })
     if not token_doc:
         return None
-    if datetime.utcnow() > token_doc['expiresAt']:
+    if datetime.now(timezone.utc) > token_doc['expiresAt']:
         database.verification_tokens.delete_one({'_id': token_doc['_id']})
         return None
     if token_doc.get('failedAttempts', 0) >= MAX_OTP_ATTEMPTS:
@@ -608,7 +608,7 @@ def upload_personal_doc():
             return jsonify({'error': 'File type not allowed'}), 400
 
         original_name = secure_filename(file.filename or 'document')
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         stored_name = f"{timestamp}_{user_id}_{original_name}"
         file_path = os.path.join(PERSONAL_DOCS_DIR, stored_name)
         file.save(file_path)
@@ -621,7 +621,7 @@ def upload_personal_doc():
             'stored_name': stored_name,
             'mime_type': file.content_type or 'application/octet-stream',
             'size': size,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
         }
         result = database.personal_docs.insert_one(doc)
         doc['_id'] = result.inserted_id

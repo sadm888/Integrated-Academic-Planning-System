@@ -18,7 +18,7 @@ Socket:
 
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Blueprint, request, jsonify, send_file
 from flask_cors import cross_origin
@@ -156,7 +156,7 @@ def send_dm(classroom_id):
             'profile_picture': profile_picture,
             'text': text,
             'file': None,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
             'read_by': [user_id],
         }
         result = db.dm_messages.insert_one(msg)
@@ -206,7 +206,7 @@ def upload_dm_file(classroom_id, to_user_id):
 
         original_name = file.filename or 'file'
         safe_name = secure_filename(original_name) or 'file'
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         stored_name = f"{timestamp}_{user_id}_{safe_name}"
         file.save(os.path.join(DM_UPLOAD_DIR, stored_name))
         mime_type = file.content_type or 'application/octet-stream'
@@ -230,7 +230,7 @@ def upload_dm_file(classroom_id, to_user_id):
                 'mime_type': mime_type,
                 'size': size,
             },
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
             'read_by': [user_id],
         }
         result = db.dm_messages.insert_one(msg)

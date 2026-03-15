@@ -17,7 +17,7 @@ REST:
 
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Blueprint, request, jsonify, send_file, redirect
 from flask_cors import cross_origin
@@ -443,7 +443,7 @@ def create_subject_section(semester_id, subject_id):
             'subject_id': subject_id,
             'name': name,
             'created_by': user_id,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
         }
         result = db.custom_sections.insert_one(doc)
         return jsonify({
@@ -653,7 +653,7 @@ def create_section_folder(semester_id, subject_id, section_id):
             'section_id': section_id,
             'name': name,
             'created_by': user_id,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
         })
         return jsonify({'folder': {'id': str(result.inserted_id), 'name': name}}), 201
     except Exception as e:
@@ -722,7 +722,7 @@ def upload_resource(semester_id):
 
         original_name = file.filename or 'file'
         safe_name = secure_filename(original_name) or 'file'
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         stored_name = f"{timestamp}_{user_id}_{safe_name}"
         file.save(os.path.join(UPLOAD_DIR, stored_name))
 
@@ -751,7 +751,7 @@ def upload_resource(semester_id):
             'source': 'upload',
             'chat_message_id': None,
             'is_public': is_public,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
         }
         result = db.academic_resources.insert_one(resource)
         resource['_id'] = result.inserted_id
@@ -827,7 +827,7 @@ def link_chat_file(semester_id):
             'uploaded_by_name': uploader_name,
             'source': 'chat',
             'chat_message_id': chat_message_id,
-            'created_at': datetime.utcnow(),
+            'created_at': datetime.now(timezone.utc),
         }
         result = db.academic_resources.insert_one(resource)
         resource['_id'] = result.inserted_id
