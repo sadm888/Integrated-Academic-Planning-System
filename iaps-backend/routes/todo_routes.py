@@ -1,5 +1,4 @@
 from flask import Blueprint, request, jsonify
-from flask_cors import cross_origin
 from datetime import datetime, timezone
 from bson import ObjectId
 import logging
@@ -11,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 @todo_bp.route('/create', methods=['POST'])
-@cross_origin()
 @token_required
 def create_todo():
     """Create a new todo item in a semester. Any member can create."""
@@ -79,7 +77,6 @@ def create_todo():
 
 
 @todo_bp.route('/semester/<semester_id>/list', methods=['GET'])
-@cross_origin()
 @token_required
 def list_todos(semester_id):
     """List all todos for a semester."""
@@ -125,7 +122,6 @@ def list_todos(semester_id):
 
 
 @todo_bp.route('/<todo_id>/toggle', methods=['PATCH'])
-@cross_origin()
 @token_required
 def toggle_todo(todo_id):
     """Toggle a todo's completed status. Any member can toggle."""
@@ -159,7 +155,6 @@ def toggle_todo(todo_id):
 
 
 @todo_bp.route('/<todo_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_todo(todo_id):
     """Delete a todo. Creator or CR can delete."""

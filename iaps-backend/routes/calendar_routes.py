@@ -1,5 +1,4 @@
 from flask import Blueprint, request, jsonify, redirect
-from flask_cors import cross_origin
 from datetime import datetime, timezone
 import jwt
 import logging
@@ -18,7 +17,6 @@ _TYPE_COLOR_ID = {
 
 
 @calendar_bp.route('/auth-url', methods=['GET'])
-@cross_origin()
 @token_required
 def get_auth_url():
     """Return Google OAuth2 authorization URL. The user's JWT is passed as the state param."""
@@ -58,7 +56,6 @@ def get_auth_url():
 
 
 @calendar_bp.route('/callback', methods=['GET'])
-@cross_origin()
 def oauth_callback():
     """
     Google redirects here after the user grants permission.
@@ -125,7 +122,6 @@ def oauth_callback():
 
 
 @calendar_bp.route('/status', methods=['GET'])
-@cross_origin()
 @token_required
 def get_status():
     """Returns whether the current user has connected their Google Calendar."""
@@ -144,7 +140,6 @@ def get_status():
 
 
 @calendar_bp.route('/disconnect', methods=['DELETE'])
-@cross_origin()
 @token_required
 def disconnect():
     """Remove stored Google Calendar tokens for the current user."""
@@ -185,7 +180,6 @@ def _get_service_or_error(db, user_id):
 
 
 @calendar_bp.route('/events', methods=['GET'])
-@cross_origin()
 @token_required
 def list_events():
     """List events from Google Calendar between time_min and time_max (ISO strings)."""
@@ -218,7 +212,6 @@ def list_events():
 
 
 @calendar_bp.route('/events', methods=['POST'])
-@cross_origin()
 @token_required
 def create_event():
     """Create a new event in the user's Google Calendar."""
@@ -265,7 +258,6 @@ def create_event():
 
 
 @calendar_bp.route('/events/<event_id>', methods=['PATCH'])
-@cross_origin()
 @token_required
 def update_event(event_id):
     """Partially update an event in the user's Google Calendar."""
@@ -311,7 +303,6 @@ def update_event(event_id):
 
 
 @calendar_bp.route('/events/<event_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_event(event_id):
     """Delete an event from the user's Google Calendar."""

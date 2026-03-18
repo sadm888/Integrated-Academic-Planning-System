@@ -1,5 +1,4 @@
 from flask import Blueprint, request, jsonify
-from flask_cors import cross_origin
 from datetime import datetime, timezone
 from bson import ObjectId
 import logging
@@ -12,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 @semester_bp.route('/create', methods=['POST'])
-@cross_origin()
 @token_required
 def create_semester():
     """Create a new semester. Only CRs of the current active semester can create a new one.
@@ -92,7 +90,6 @@ def create_semester():
 
 
 @semester_bp.route('/<semester_id>', methods=['GET'])
-@cross_origin()
 @token_required
 def get_semester(semester_id):
     """Get a single semester with its subjects and any pending CR nomination."""
@@ -203,7 +200,6 @@ def get_semester(semester_id):
 
 
 @semester_bp.route('/classroom/<classroom_id>/list', methods=['GET'])
-@cross_origin()
 @token_required
 def list_semesters(classroom_id):
     """List all semesters for a classroom"""
@@ -257,7 +253,6 @@ def list_semesters(classroom_id):
 
 
 @semester_bp.route('/<semester_id>/add-cr', methods=['POST'])
-@cross_origin()
 @token_required
 def add_cr(semester_id):
     """Add a CR to a semester. Only existing CRs can add new CRs."""
@@ -302,7 +297,6 @@ def add_cr(semester_id):
 
 
 @semester_bp.route('/<semester_id>/remove-cr', methods=['POST'])
-@cross_origin()
 @token_required
 def remove_cr(semester_id):
     """Remove a CR from a semester. CRs can remove other CRs. At least one CR must remain."""
@@ -347,7 +341,6 @@ def remove_cr(semester_id):
 
 
 @semester_bp.route('/<semester_id>/nominate-cr', methods=['POST'])
-@cross_origin()
 @token_required
 def nominate_cr(semester_id):
     """CR nominates a member to take over their CR role. One pending nomination per semester."""
@@ -405,7 +398,6 @@ def nominate_cr(semester_id):
 
 
 @semester_bp.route('/<semester_id>/nominate-add-cr', methods=['POST'])
-@cross_origin()
 @token_required
 def nominate_add_cr(semester_id):
     """CR nominates a member to become co-CR. Nominator keeps their own CR role."""
@@ -462,7 +454,6 @@ def nominate_add_cr(semester_id):
 
 
 @semester_bp.route('/<semester_id>/accept-cr', methods=['POST'])
-@cross_origin()
 @token_required
 def accept_cr_nomination(semester_id):
     """Nominated user accepts — they become CR. For transfer: nominator loses CR. For add_co_cr: nominator keeps CR."""
@@ -526,7 +517,6 @@ def accept_cr_nomination(semester_id):
 
 
 @semester_bp.route('/<semester_id>/decline-cr', methods=['POST'])
-@cross_origin()
 @token_required
 def decline_cr_nomination(semester_id):
     """Nominated user declines — nomination is cancelled, nominator keeps their role."""
@@ -575,7 +565,6 @@ def decline_cr_nomination(semester_id):
 
 
 @semester_bp.route('/<semester_id>/cr-notifications', methods=['GET'])
-@cross_origin()
 @token_required
 def get_cr_notifications(semester_id):
     """Return unread CR transfer notifications for the current user in this semester."""
@@ -602,7 +591,6 @@ def get_cr_notifications(semester_id):
 
 
 @semester_bp.route('/<semester_id>/links', methods=['GET'])
-@cross_origin()
 @token_required
 def list_links(semester_id):
     """List all links for a semester. Any member can view."""
@@ -625,7 +613,6 @@ def list_links(semester_id):
 
 
 @semester_bp.route('/<semester_id>/links', methods=['POST'])
-@cross_origin()
 @token_required
 def add_link(semester_id):
     """CR adds a labeled link to the semester."""
@@ -654,7 +641,6 @@ def add_link(semester_id):
 
 
 @semester_bp.route('/<semester_id>/links/<link_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_link(semester_id, link_id):
     """CR deletes a link."""
@@ -677,7 +663,6 @@ def delete_link(semester_id, link_id):
 
 
 @semester_bp.route('/<semester_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_semester(semester_id):
     """Delete a semester (CR only, cannot delete the only semester)"""

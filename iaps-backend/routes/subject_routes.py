@@ -1,6 +1,5 @@
 import os
 from flask import Blueprint, request, jsonify
-from flask_cors import cross_origin
 from datetime import datetime, timezone
 from bson import ObjectId
 import logging
@@ -15,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 @subject_bp.route('/create', methods=['POST'])
-@cross_origin()
 @token_required
 def create_subject():
     """Create a new subject in a semester. CR only."""
@@ -105,7 +103,6 @@ def create_subject():
 
 
 @subject_bp.route('/semester/<semester_id>/list', methods=['GET'])
-@cross_origin()
 @token_required
 def list_subjects(semester_id):
     """List all subjects for a semester. Any member."""
@@ -151,7 +148,6 @@ def list_subjects(semester_id):
 
 
 @subject_bp.route('/<subject_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_subject(subject_id):
     """Delete a subject. CR only."""
@@ -209,7 +205,6 @@ def delete_subject(subject_id):
 
 
 @subject_bp.route('/<subject_id>', methods=['PATCH'])
-@cross_origin()
 @token_required
 def update_subject(subject_id):
     """Update subject fields (credits, faculties, details). CR only for class subjects."""

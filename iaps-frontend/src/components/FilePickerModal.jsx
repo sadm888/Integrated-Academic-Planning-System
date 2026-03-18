@@ -42,8 +42,8 @@ export default function FilePickerModal({ onSelect, onClose, user }) {
       ? resources.filter(r => (r.name || '').toLowerCase().includes(q) || (r.uploaded_by_name || '').toLowerCase().includes(q))
       : resources;
     return {
-      docFiles: all.filter(r => r.source !== 'chat_unlinked'),
-      chatFiles: all.filter(r => r.source === 'chat_unlinked'),
+      docFiles: all.filter(r => r.source !== 'chat_unlinked' && r.source !== 'chat'),
+      chatFiles: all.filter(r => r.source === 'chat_unlinked' || r.source === 'chat'),
     };
   }, [resources, search]);
 

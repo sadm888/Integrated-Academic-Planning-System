@@ -1,5 +1,4 @@
 from flask import Blueprint, request, jsonify
-from flask_cors import cross_origin
 from datetime import datetime, timezone
 from bson import ObjectId
 import logging
@@ -11,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 @schedule_bp.route('/create', methods=['POST'])
-@cross_origin()
 @token_required
 def create_schedule():
     """CR posts a schedule batch (set of events) for a classroom semester."""
@@ -93,7 +91,6 @@ def create_schedule():
 
 
 @schedule_bp.route('/classroom/<classroom_id>', methods=['GET'])
-@cross_origin()
 @token_required
 def list_schedules(classroom_id):
     """List all schedule requests for a classroom. Any member can see them."""
@@ -140,7 +137,6 @@ def list_schedules(classroom_id):
 
 
 @schedule_bp.route('/request/<request_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_schedule(request_id):
     """Delete a schedule request. CR of the semester can delete."""
@@ -170,7 +166,6 @@ def delete_schedule(request_id):
 
 
 @schedule_bp.route('/request/<request_id>/pull', methods=['POST'])
-@cross_origin()
 @token_required
 def pull_schedule(request_id):
     """Pull a single schedule request into the caller's Google Calendar."""
@@ -234,7 +229,6 @@ def pull_schedule(request_id):
 
 
 @schedule_bp.route('/classroom/<classroom_id>/pull-all', methods=['POST'])
-@cross_origin()
 @token_required
 def pull_all_schedules(classroom_id):
     """Pull all un-accepted schedule requests for a classroom into Google Calendar."""

@@ -20,7 +20,6 @@ import logging
 from datetime import datetime, timezone
 
 from flask import Blueprint, request, jsonify, send_file, redirect
-from flask_cors import cross_origin
 from bson import ObjectId
 import jwt
 from werkzeug.utils import secure_filename
@@ -139,7 +138,6 @@ def _delete_resources_for_section(db, semester_id, subject_id, section_id):
 # ─── All resources (cross-semester) ───────────────────────────────────────────
 
 @academic_bp.route('/all-resources', methods=['GET'])
-@cross_origin()
 @token_required
 def all_resources():
     """Return all academic resources across every semester the user can access."""
@@ -266,7 +264,6 @@ def all_resources():
 # ─── My semesters ─────────────────────────────────────────────────────────────
 
 @academic_bp.route('/my-semesters', methods=['GET'])
-@cross_origin()
 @token_required
 def my_semesters():
     from database import get_db
@@ -300,7 +297,6 @@ def my_semesters():
 # ─── Resources list ───────────────────────────────────────────────────────────
 
 @academic_bp.route('/<semester_id>/resources', methods=['GET'])
-@cross_origin()
 @token_required
 def list_resources(semester_id):
     from database import get_db
@@ -337,7 +333,6 @@ def list_resources(semester_id):
 # ─── Per-subject sections ─────────────────────────────────────────────────────
 
 @academic_bp.route('/<semester_id>/subjects/<subject_id>/sections', methods=['GET'])
-@cross_origin()
 @token_required
 def list_subject_sections(semester_id, subject_id):
     from database import get_db
@@ -419,7 +414,6 @@ def list_subject_sections(semester_id, subject_id):
 
 
 @academic_bp.route('/<semester_id>/subjects/<subject_id>/sections', methods=['POST'])
-@cross_origin()
 @token_required
 def create_subject_section(semester_id, subject_id):
     from database import get_db
@@ -461,7 +455,6 @@ def create_subject_section(semester_id, subject_id):
 
 
 @academic_bp.route('/<semester_id>/subjects/<subject_id>/sections/<section_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_subject_section(semester_id, subject_id, section_id):
     from database import get_db
@@ -515,7 +508,6 @@ def delete_subject_section(semester_id, subject_id, section_id):
 
 
 @academic_bp.route('/<semester_id>/subjects/<subject_id>/sections/<section_id>/toggle', methods=['POST'])
-@cross_origin()
 @token_required
 def toggle_section_visibility(semester_id, subject_id, section_id):
     """Toggle visibility of a deletable default section (pyq/books). CR or personal subject owner."""
@@ -547,7 +539,6 @@ def toggle_section_visibility(semester_id, subject_id, section_id):
 
 
 @academic_bp.route('/<semester_id>/subjects/<subject_id>/sections/<section_id>/user-hide', methods=['POST'])
-@cross_origin()
 @token_required
 def user_hide_section(semester_id, subject_id, section_id):
     """Per-user non-destructive hide/show of PYQ/Books sections (doesn't delete files)."""
@@ -578,7 +569,6 @@ def user_hide_section(semester_id, subject_id, section_id):
 
 
 @academic_bp.route('/<semester_id>/subjects/<subject_id>/sections/<section_id>/lock', methods=['POST'])
-@cross_origin()
 @token_required
 def lock_custom_section(semester_id, subject_id, section_id):
     """Toggle is_private on a custom section. Only the creator or a CR can lock/unlock."""
@@ -614,7 +604,6 @@ def lock_custom_section(semester_id, subject_id, section_id):
 # ─── Section Folders (sub-folders inside a section) ───────────────────────────
 
 @academic_bp.route('/<semester_id>/subjects/<subject_id>/sections/<section_id>/folders', methods=['GET'])
-@cross_origin()
 @token_required
 def list_section_folders(semester_id, subject_id, section_id):
     from database import get_db
@@ -634,7 +623,6 @@ def list_section_folders(semester_id, subject_id, section_id):
 
 
 @academic_bp.route('/<semester_id>/subjects/<subject_id>/sections/<section_id>/folders', methods=['POST'])
-@cross_origin()
 @token_required
 def create_section_folder(semester_id, subject_id, section_id):
     from database import get_db
@@ -662,7 +650,6 @@ def create_section_folder(semester_id, subject_id, section_id):
 
 
 @academic_bp.route('/<semester_id>/subjects/<subject_id>/sections/<section_id>/folders/<folder_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_section_folder(semester_id, subject_id, section_id, folder_id):
     from database import get_db
@@ -686,7 +673,6 @@ def delete_section_folder(semester_id, subject_id, section_id, folder_id):
 # ─── Upload ───────────────────────────────────────────────────────────────────
 
 @academic_bp.route('/<semester_id>/upload', methods=['POST'])
-@cross_origin()
 @token_required
 def upload_resource(semester_id):
     from database import get_db
@@ -764,7 +750,6 @@ def upload_resource(semester_id):
 # ─── Link chat file ────────────────────────────────────────────────────────────
 
 @academic_bp.route('/<semester_id>/link-chat-file', methods=['POST'])
-@cross_origin()
 @token_required
 def link_chat_file(semester_id):
     from database import get_db
@@ -840,7 +825,6 @@ def link_chat_file(semester_id):
 # ─── Move resource ─────────────────────────────────────────────────────────────
 
 @academic_bp.route('/<semester_id>/resources/<resource_id>', methods=['PATCH'])
-@cross_origin()
 @token_required
 def move_resource(semester_id, resource_id):
     from database import get_db
@@ -881,7 +865,6 @@ def move_resource(semester_id, resource_id):
 # ─── Toggle public/private (PYQ/Books, CR only) ──────────────────────────────
 
 @academic_bp.route('/<semester_id>/resources/<resource_id>/toggle-public', methods=['PATCH'])
-@cross_origin()
 @token_required
 def toggle_resource_public(semester_id, resource_id):
     from database import get_db
@@ -907,7 +890,6 @@ def toggle_resource_public(semester_id, resource_id):
 # ─── Hide resource for self (members on public CR PYQ/Books files) ───────────
 
 @academic_bp.route('/<semester_id>/resources/<resource_id>/hide', methods=['POST'])
-@cross_origin()
 @token_required
 def hide_resource_for_self(semester_id, resource_id):
     """Add user_id to resource's hidden_by list — removes it from their view only."""
@@ -933,7 +915,6 @@ def hide_resource_for_self(semester_id, resource_id):
 # ─── Delete resource ──────────────────────────────────────────────────────────
 
 @academic_bp.route('/<semester_id>/resources/<resource_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_resource(semester_id, resource_id):
     from database import get_db
@@ -963,7 +944,6 @@ def delete_resource(semester_id, resource_id):
 # ─── Chat files listing ────────────────────────────────────────────────────────
 
 @academic_bp.route('/<semester_id>/chat-files', methods=['GET'])
-@cross_origin()
 @token_required
 def list_chat_files(semester_id):
     from database import get_db
@@ -1009,7 +989,6 @@ def list_chat_files(semester_id):
 # ─── File serving ─────────────────────────────────────────────────────────────
 
 @academic_bp.route('/file/<resource_id>', methods=['GET'])
-@cross_origin()
 def serve_academic_file(resource_id):
     from database import get_db
     try:

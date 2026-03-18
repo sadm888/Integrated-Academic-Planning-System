@@ -175,10 +175,11 @@ export const settingsAPI = {
     });
   },
   getAvatarUrl: (userId) => `${BACKEND_URL}/api/settings/avatar/${userId}`,
-  changePasswordRequest: () => api.post('/settings/change-password-request'),
-  changePasswordConfirm: (data) => api.post('/settings/change-password-confirm', data),
-  changeEmailRequest: (newEmail) => api.post('/settings/change-email-request', { new_email: newEmail }),
-  changeEmailConfirm: (data) => api.post('/settings/change-email-confirm', data),
+  getSignedAvatarUrl: async (userId) => {
+    const res = await api.get(`/settings/avatar-token/${userId}`);
+    return `${BACKEND_URL}/api/settings/avatar/full/${userId}?sig=${res.data.token}`;
+  },
+  changePassword: (data) => api.post('/settings/change-password', data),
   getChatFiles: () => api.get('/settings/chat-files'),
   deleteChatFile: (messageId) => api.delete(`/settings/chat-file/${messageId}`),
   acknowledgePhotoRemoval: () => api.post('/settings/acknowledge-photo-removal'),

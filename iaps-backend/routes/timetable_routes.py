@@ -6,7 +6,6 @@ Collections used:
   academic_calendars  — semester academic calendar (holidays, exams, sem dates)
 """
 from flask import Blueprint, request, jsonify
-from flask_cors import cross_origin
 from datetime import datetime, date, timedelta, timezone
 from bson import ObjectId
 import logging
@@ -170,7 +169,6 @@ def _apply_overrides_to_week(grid, days, time_slots, overrides, week_start_date)
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @timetable_bp.route('/semester/<semester_id>/extract', methods=['POST'])
-@cross_origin()
 @token_required
 def extract_timetable(semester_id):
     """CR uploads image → ML extracts timetable → returns JSON for review."""
@@ -228,7 +226,6 @@ def extract_timetable(semester_id):
 
 
 @timetable_bp.route('/semester/<semester_id>', methods=['POST'])
-@cross_origin()
 @token_required
 def save_timetable(semester_id):
     """Save or replace the base timetable for a semester (CR only)."""
@@ -349,7 +346,6 @@ def save_timetable(semester_id):
 
 
 @timetable_bp.route('/semester/<semester_id>', methods=['GET'])
-@cross_origin()
 @token_required
 def get_timetable(semester_id):
     """Get the base timetable for a semester (all members)."""
@@ -375,7 +371,6 @@ def get_timetable(semester_id):
 
 
 @timetable_bp.route('/semester/<semester_id>/week', methods=['GET'])
-@cross_origin()
 @token_required
 def get_week_view(semester_id):
     """
@@ -468,7 +463,6 @@ def get_week_view(semester_id):
 
 
 @timetable_bp.route('/semester/<semester_id>/today', methods=['GET'])
-@cross_origin()
 @token_required
 def get_today(semester_id):
     """Get today's classes with overrides applied."""
@@ -527,7 +521,6 @@ def get_today(semester_id):
 
 
 @timetable_bp.route('/semester/<semester_id>/override', methods=['POST'])
-@cross_origin()
 @token_required
 def add_override(semester_id):
     """CR adds a day-specific override (cancel / reschedule / edit)."""
@@ -633,7 +626,6 @@ def add_override(semester_id):
 
 
 @timetable_bp.route('/semester/<semester_id>/override/<override_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_override(semester_id, override_id):
     """CR deletes a specific override."""
@@ -662,7 +654,6 @@ def delete_override(semester_id, override_id):
 
 
 @timetable_bp.route('/semester/<semester_id>/overrides', methods=['GET'])
-@cross_origin()
 @token_required
 def list_overrides(semester_id):
     """List upcoming overrides for a semester (all members)."""
@@ -820,7 +811,6 @@ def _next_weekday_date(ref_date, day_abbr):
 
 
 @timetable_bp.route('/semester/<semester_id>/push-to-calendar', methods=['POST'])
-@cross_origin()
 @token_required
 def push_to_calendar(semester_id):
     """Convert base timetable into recurring weekly Google Calendar events."""
@@ -940,7 +930,6 @@ def push_to_calendar(semester_id):
 # ── Academic Calendar Routes ──────────────────────────────────────────────────
 
 @timetable_bp.route('/semester/<semester_id>/academic-calendar/extract', methods=['POST'])
-@cross_origin()
 @token_required
 def extract_academic_calendar(semester_id):
     """CR uploads academic calendar image → ML extracts events → returns JSON."""
@@ -976,7 +965,6 @@ def extract_academic_calendar(semester_id):
 
 
 @timetable_bp.route('/semester/<semester_id>/academic-calendar', methods=['POST'])
-@cross_origin()
 @token_required
 def save_academic_calendar(semester_id):
     """CR saves/replaces the academic calendar (after review)."""
@@ -1078,7 +1066,6 @@ def save_academic_calendar(semester_id):
 
 
 @timetable_bp.route('/semester/<semester_id>/academic-calendar', methods=['GET'])
-@cross_origin()
 @token_required
 def get_academic_calendar(semester_id):
     """Get the academic calendar for a semester (all members)."""
@@ -1113,7 +1100,6 @@ def get_academic_calendar(semester_id):
 
 
 @timetable_bp.route('/semester/<semester_id>/academic-calendar/push-to-calendar', methods=['POST'])
-@cross_origin()
 @token_required
 def push_academic_calendar_to_gcal(semester_id):
     """Push academic calendar events to the requesting user's Google Calendar."""

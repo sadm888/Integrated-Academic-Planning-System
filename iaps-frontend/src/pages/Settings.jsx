@@ -2,20 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { settingsAPI, calendarAPI, BACKEND_URL } from '../services/api';
 import { useTheme } from '../contexts/ThemeContext';
 import Avatar from '../components/Avatar';
-import { FileTypeIcon } from '../utils/fileUtils';
+import { FileTypeIcon, sizeLabel } from '../utils/fileUtils';
 import { AlertTriangle, Pencil, Eye, Trash2, Calendar, CheckCircle } from 'lucide-react';
 
 const SECTIONS = ['Profile', 'Security', 'Appearance', 'Personal Documents', 'Connected Services'];
 
 // ─── helpers ────────────────────────────────────────────────────────────────
-
-function formatBytes(bytes) {
-  if (!bytes) return '0 B';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 
 // Compress an image file using Canvas before uploading (#11)
 function compressImage(file, maxDim = 800, quality = 0.85) {
@@ -271,53 +263,24 @@ function PwInput({ value, onChange, placeholder = '', required = false, disabled
 }
 
 function SecuritySection() {
-  // ── Change Password ──
-  const [pwStep, setPwStep] = useState(1); // 1=send OTP, 2=enter OTP+new pw
   const [pwSending, setPwSending] = useState(false);
-  const [pwForm, setPwForm] = useState({ otp: '', current_password: '', new_password: '', confirm: '' });
+  const [pwForm, setPwForm] = useState({ current_password: '', new_password: '', confirm: '' });
   const [pwMsg, setPwMsg] = useState('');
   const [pwErr, setPwErr] = useState('');
 
-  // ── Change Email ──
-  const [emStep, setEmStep] = useState(1); // 1=enter new email, 2=enter OTP
-  const [emSending, setEmSending] = useState(false);
-  const [newEmail, setNewEmail] = useState('');
-  const [emOtp, setEmOtp] = useState('');
-  const [emMsg, setEmMsg] = useState('');
-  const [emErr, setEmErr] = useState('');
-
-  const sendPasswordOtp = async () => {
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    if (pwForm.new_password !== pwForm.confirm) { setPwErr('New passwords do not match.'); return; }
     setPwSending(true);
     setPwErr('');
     setPwMsg('');
     try {
-      const res = await settingsAPI.changePasswordRequest();
-      setPwMsg(res.data.message);
-      setPwStep(2);
-    } catch (error) {
-      setPwErr(error.response?.data?.error || 'Failed to send OTP.');
-    } finally {
-      setPwSending(false);
-    }
-  };
-
-  const confirmPassword = async (e) => {
-    e.preventDefault();
-    if (pwForm.new_password !== pwForm.confirm) {
-      setPwErr('New passwords do not match.');
-      return;
-    }
-    setPwSending(true);
-    setPwErr('');
-    try {
-      await settingsAPI.changePasswordConfirm({
-        otp: pwForm.otp,
+      await settingsAPI.changePassword({
         current_password: pwForm.current_password,
         new_password: pwForm.new_password,
       });
       setPwMsg('Password changed successfully!');
-      setPwStep(1);
-      setPwForm({ otp: '', current_password: '', new_password: '', confirm: '' });
+      setPwForm({ current_password: '', new_password: '', confirm: '' });
     } catch (error) {
       setPwErr(error.response?.data?.error || 'Failed to change password.');
     } finally {
@@ -325,144 +288,36 @@ function SecuritySection() {
     }
   };
 
-  const sendEmailOtp = async () => {
-    if (!newEmail) { setEmErr('Enter a new email address.'); return; }
-    setEmSending(true);
-    setEmErr('');
-    setEmMsg('');
-    try {
-      const res = await settingsAPI.changeEmailRequest(newEmail);
-      setEmMsg(res.data.message);
-      setEmStep(2);
-    } catch (error) {
-      setEmErr(error.response?.data?.error || 'Failed to send OTP.');
-    } finally {
-      setEmSending(false);
-    }
-  };
-
-  const confirmEmail = async (e) => {
-    e.preventDefault();
-    setEmSending(true);
-    setEmErr('');
-    try {
-      await settingsAPI.changeEmailConfirm({ otp: emOtp });
-      setEmMsg('Email changed successfully! Please log in again.');
-      setEmStep(1);
-      setNewEmail('');
-      setEmOtp('');
-    } catch (error) {
-      setEmErr(error.response?.data?.error || 'Failed to change email.');
-    } finally {
-      setEmSending(false);
-    }
-  };
-
   return (
     <div>
       <h2 style={headingStyle}>Security</h2>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-
-        {/* Change Password card */}
+      <div style={{ maxWidth: '420px' }}>
         <div style={cardStyle}>
           <h3 style={cardHeadingStyle}>Change Password</h3>
-          {pwStep === 1 ? (
-            <>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '16px' }}>
-                We'll send a 6-digit code to your email to verify the change.
-              </p>
-              {pwMsg && <p style={successMsgStyle}>{pwMsg}</p>}
-              {pwErr && <p style={errorMsgStyle}>{pwErr}</p>}
-              <button onClick={sendPasswordOtp} disabled={pwSending} style={primaryBtnStyle}>
-                {pwSending ? 'Sending…' : 'Send OTP to my email'}
-              </button>
-            </>
-          ) : (
-            <form onSubmit={confirmPassword}>
-              <div style={fieldGroupStyle}>
-                <label style={labelStyle}>OTP code</label>
-                <input style={inputStyle} type="text" placeholder="6-digit code" value={pwForm.otp}
-                  onChange={(e) => setPwForm({ ...pwForm, otp: e.target.value })} required />
-              </div>
-              {[
-                { label: 'Current password', key: 'current_password', placeholder: '' },
-                { label: 'New password', key: 'new_password', placeholder: 'Min 8 characters' },
-                { label: 'Confirm new password', key: 'confirm', placeholder: '' },
-              ].map(({ label, key, placeholder }) => (
-                <div key={key} style={fieldGroupStyle}>
-                  <label style={labelStyle}>{label}</label>
-                  <PwInput
-                    value={pwForm[key]}
-                    onChange={(e) => setPwForm({ ...pwForm, [key]: e.target.value })}
-                    placeholder={placeholder}
-                    required
-                    disabled={pwSending}
-                  />
-                </div>
-              ))}
-              {pwMsg && <p style={successMsgStyle}>{pwMsg}</p>}
-              {pwErr && <p style={errorMsgStyle}>{pwErr}</p>}
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button type="button" onClick={() => { setPwStep(1); setPwErr(''); setPwMsg(''); }} style={ghostBtnStyle}>
-                  Back
-                </button>
-                <button type="submit" disabled={pwSending} style={primaryBtnStyle}>
-                  {pwSending ? 'Saving…' : 'Change Password'}
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
-
-        {/* Change Email card */}
-        <div style={cardStyle}>
-          <h3 style={cardHeadingStyle}>Change Email</h3>
-          {emStep === 1 ? (
-            <>
-              <div style={fieldGroupStyle}>
-                <label style={labelStyle}>New email address</label>
-                <input
-                  style={inputStyle}
-                  type="email"
-                  placeholder="new@example.com"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                />
-              </div>
-              {emMsg && <p style={successMsgStyle}>{emMsg}</p>}
-              {emErr && <p style={errorMsgStyle}>{emErr}</p>}
-              <button onClick={sendEmailOtp} disabled={emSending} style={primaryBtnStyle}>
-                {emSending ? 'Sending…' : 'Send OTP'}
-              </button>
-            </>
-          ) : (
-            <form onSubmit={confirmEmail}>
-              <div style={fieldGroupStyle}>
-                <label style={labelStyle}>OTP sent to {newEmail}</label>
-                <input
-                  style={inputStyle}
-                  type="text"
-                  placeholder="6-digit code"
-                  value={emOtp}
-                  onChange={(e) => setEmOtp(e.target.value)}
-                  maxLength={6}
+          <form onSubmit={handleChangePassword}>
+            {[
+              { label: 'Current password', key: 'current_password', placeholder: '' },
+              { label: 'New password', key: 'new_password', placeholder: 'Min 8 characters' },
+              { label: 'Confirm new password', key: 'confirm', placeholder: '' },
+            ].map(({ label, key, placeholder }) => (
+              <div key={key} style={fieldGroupStyle}>
+                <label style={labelStyle}>{label}</label>
+                <PwInput
+                  value={pwForm[key]}
+                  onChange={(e) => setPwForm({ ...pwForm, [key]: e.target.value })}
+                  placeholder={placeholder}
                   required
+                  disabled={pwSending}
                 />
               </div>
-              {emMsg && <p style={successMsgStyle}>{emMsg}</p>}
-              {emErr && <p style={errorMsgStyle}>{emErr}</p>}
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button type="button" onClick={() => { setEmStep(1); setEmErr(''); setEmMsg(''); }} style={ghostBtnStyle}>
-                  Back
-                </button>
-                <button type="submit" disabled={emSending} style={primaryBtnStyle}>
-                  {emSending ? 'Verifying…' : 'Confirm Email Change'}
-                </button>
-              </div>
-            </form>
-          )}
+            ))}
+            {pwMsg && <p style={successMsgStyle}>{pwMsg}</p>}
+            {pwErr && <p style={errorMsgStyle}>{pwErr}</p>}
+            <button type="submit" disabled={pwSending} style={primaryBtnStyle}>
+              {pwSending ? 'Saving…' : 'Change Password'}
+            </button>
+          </form>
         </div>
-
       </div>
     </div>
   );
@@ -576,7 +431,7 @@ function StorageSection() {
                     {f.filename}
                   </div>
                   <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
-                    {formatBytes(f.size)} · {f.created_at ? new Date(f.created_at).toLocaleDateString() : ''}
+                    {sizeLabel(f.size)} · {f.created_at ? new Date(f.created_at).toLocaleDateString() : ''}
                   </div>
                 </div>
                 <button
@@ -728,7 +583,7 @@ function PersonalDocumentsSection() {
                   </div>
                   <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
                     {doc.filename !== doc.label && <span>{doc.filename} · </span>}
-                    {formatBytes(doc.size)} · {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : ''}
+                    {sizeLabel(doc.size)} · {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : ''}
                   </div>
                 </div>
                 <a

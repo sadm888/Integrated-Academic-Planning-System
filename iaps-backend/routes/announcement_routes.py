@@ -1,5 +1,4 @@
 from flask import Blueprint, request, jsonify
-from flask_cors import cross_origin
 from datetime import datetime, timezone
 from bson import ObjectId
 import logging
@@ -25,7 +24,6 @@ def _get_semester_and_classroom(db, semester_id, user_id):
 
 
 @announcement_bp.route('/semester/<semester_id>', methods=['GET'])
-@cross_origin()
 @token_required
 def list_announcements(semester_id):
     from database import get_db
@@ -57,7 +55,6 @@ def list_announcements(semester_id):
 
 
 @announcement_bp.route('/semester/<semester_id>', methods=['POST'])
-@cross_origin()
 @token_required
 def create_announcement(semester_id):
     from database import get_db
@@ -104,7 +101,6 @@ def create_announcement(semester_id):
 
 
 @announcement_bp.route('/<announcement_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_announcement(announcement_id):
     from database import get_db

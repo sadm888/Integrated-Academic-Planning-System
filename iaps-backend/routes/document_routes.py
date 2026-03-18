@@ -1,5 +1,4 @@
 from flask import Blueprint, request, jsonify, send_file
-from flask_cors import cross_origin
 from datetime import datetime, timezone
 from bson import ObjectId
 from werkzeug.utils import secure_filename
@@ -25,7 +24,6 @@ def allowed_file(filename):
 
 
 @document_bp.route('/upload', methods=['POST'])
-@cross_origin()
 @token_required
 def upload_document():
     """Upload document. Any member can upload."""
@@ -104,7 +102,6 @@ def upload_document():
 
 
 @document_bp.route('/semester/<semester_id>/list', methods=['GET'])
-@cross_origin()
 @token_required
 def list_documents(semester_id):
     """List all documents for a semester"""
@@ -157,7 +154,6 @@ def list_documents(semester_id):
 
 
 @document_bp.route('/<document_id>/download', methods=['GET'])
-@cross_origin()
 def download_document(document_id):
     """Serve a document file to a classroom member. Accepts token via query param or Authorization header."""
     import jwt as pyjwt
@@ -198,7 +194,6 @@ def download_document(document_id):
 
 
 @document_bp.route('/<document_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_document(document_id):
     """Delete document (owner only)"""
@@ -228,7 +223,6 @@ def delete_document(document_id):
 
 
 @document_bp.route('/<document_id>/toggle-ai', methods=['PATCH'])
-@cross_origin()
 @token_required
 def toggle_ai_usage(document_id):
     """Toggle AI usage flag for document (CR only)"""

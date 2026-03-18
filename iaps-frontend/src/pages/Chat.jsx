@@ -48,9 +48,6 @@ function FilesPanel({ messages }) {
   const toggleSection = (cat) =>
     setOpenSections(prev => ({ ...prev, [cat]: !prev[cat] }));
 
-  const formatDate = (iso) =>
-    new Date(iso).toLocaleDateString([], { day: 'numeric', month: 'short' });
-
   return (
     <div style={{
       width: '272px', flexShrink: 0, background: 'var(--card-bg)',

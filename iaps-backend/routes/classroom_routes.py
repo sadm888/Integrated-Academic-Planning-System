@@ -1,5 +1,4 @@
 from flask import Blueprint, request, jsonify
-from flask_cors import cross_origin
 from datetime import datetime, timezone
 from bson import ObjectId
 import logging
@@ -38,7 +37,6 @@ def format_classroom(classroom, show_code=False):
 
 
 @classroom_bp.route('/create', methods=['POST'])
-@cross_origin()
 @token_required
 def create_classroom():
     """Create a new classroom. Creator becomes a member and first CR of the auto-created semester."""
@@ -123,7 +121,6 @@ def create_classroom():
 
 
 @classroom_bp.route('/join/request', methods=['POST'])
-@cross_origin()
 @token_required
 def request_join():
     """Request to join a classroom using code. CR must approve."""
@@ -175,7 +172,6 @@ def request_join():
 
 
 @classroom_bp.route('/<classroom_id>/approve', methods=['POST'])
-@cross_origin()
 @token_required
 def approve_request(classroom_id):
     """Approve a join request. Only CRs of the active semester can approve."""
@@ -221,7 +217,6 @@ def approve_request(classroom_id):
 
 
 @classroom_bp.route('/<classroom_id>/reject', methods=['POST'])
-@cross_origin()
 @token_required
 def reject_request(classroom_id):
     """Reject a join request. Only CRs can reject."""
@@ -261,7 +256,6 @@ def reject_request(classroom_id):
 
 
 @classroom_bp.route('/list', methods=['GET'])
-@cross_origin()
 @token_required
 def list_classrooms():
     """List all classrooms the user is a member of"""
@@ -299,7 +293,6 @@ def list_classrooms():
 
 
 @classroom_bp.route('/<classroom_id>', methods=['GET'])
-@cross_origin()
 @token_required
 def get_classroom(classroom_id):
     """Get detailed classroom information with semesters"""
@@ -427,7 +420,6 @@ def get_classroom(classroom_id):
 
 
 @classroom_bp.route('/<classroom_id>/leave', methods=['POST'])
-@cross_origin()
 @token_required
 def leave_classroom(classroom_id):
     """Leave a classroom. Any member can leave at any time."""
@@ -494,7 +486,6 @@ def leave_classroom(classroom_id):
 
 
 @classroom_bp.route('/<classroom_id>/semester/<semester_id>/quit-cr', methods=['POST'])
-@cross_origin()
 @token_required
 def quit_cr(classroom_id, semester_id):
     """Step down as CR in a semester without leaving the classroom. Only allowed if another CR exists."""
@@ -545,7 +536,6 @@ def quit_cr(classroom_id, semester_id):
 
 
 @classroom_bp.route('/<classroom_id>/pending-nominations', methods=['GET'])
-@cross_origin()
 @token_required
 def get_pending_nominations(classroom_id):
     """Return any pending CR nominations for the current user across all semesters in this classroom."""
@@ -583,7 +573,6 @@ def get_pending_nominations(classroom_id):
 
 
 @classroom_bp.route('/<classroom_id>/cr-notifications', methods=['GET'])
-@cross_origin()
 @token_required
 def get_classroom_cr_notifications(classroom_id):
     """Fetch all unread CR notifications for the current user across all semesters in this classroom."""
@@ -610,7 +599,6 @@ def get_classroom_cr_notifications(classroom_id):
 
 
 @classroom_bp.route('/<classroom_id>/remove-member', methods=['POST'])
-@cross_origin()
 @token_required
 def remove_member(classroom_id):
     """Remove a member from the classroom. CR only. Cannot remove yourself or the creator."""
@@ -691,7 +679,6 @@ def remove_member(classroom_id):
 
 
 @classroom_bp.route('/<classroom_id>/remove-member-avatar', methods=['POST'])
-@cross_origin()
 @token_required
 def remove_member_avatar(classroom_id):
     """CR removes a member's profile photo with a reason."""
@@ -758,7 +745,6 @@ def remove_member_avatar(classroom_id):
 
 
 @classroom_bp.route('/<classroom_id>/flag-member-name', methods=['POST'])
-@cross_origin()
 @token_required
 def flag_member_name(classroom_id):
     """CR flags a member's display name as inappropriate; member is shown as Anonymous until they change it."""
@@ -813,7 +799,6 @@ def flag_member_name(classroom_id):
 
 
 @classroom_bp.route('/<classroom_id>/activity', methods=['GET'])
-@cross_origin()
 @token_required
 def get_classroom_activity(classroom_id):
     """Return recent activity for a classroom: announcements, unread chat counts, pending requests."""
@@ -888,7 +873,6 @@ def get_classroom_activity(classroom_id):
 
 
 @classroom_bp.route('/<classroom_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_classroom(classroom_id):
     """Delete a classroom and all its data. CR only."""

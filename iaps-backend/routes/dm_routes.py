@@ -21,7 +21,6 @@ import logging
 from datetime import datetime, timezone
 
 from flask import Blueprint, request, jsonify, send_file
-from flask_cors import cross_origin
 from bson import ObjectId
 import jwt
 from werkzeug.utils import secure_filename
@@ -115,7 +114,6 @@ def handle_join_dm(data):
 # ─── REST: send text DM ───────────────────────────────────────────────────────
 
 @dm_bp.route('/<classroom_id>/send', methods=['POST'])
-@cross_origin()
 @token_required
 def send_dm(classroom_id):
     from database import get_db
@@ -173,7 +171,6 @@ def send_dm(classroom_id):
 # ─── REST: upload file DM ─────────────────────────────────────────────────────
 
 @dm_bp.route('/<classroom_id>/upload/<to_user_id>', methods=['POST'])
-@cross_origin()
 @token_required
 def upload_dm_file(classroom_id, to_user_id):
     from database import get_db
@@ -247,7 +244,6 @@ def upload_dm_file(classroom_id, to_user_id):
 # ─── REST: thread history ─────────────────────────────────────────────────────
 
 @dm_bp.route('/<classroom_id>/thread/<with_user_id>', methods=['GET'])
-@cross_origin()
 @token_required
 def get_dm_thread(classroom_id, with_user_id):
     from database import get_db
@@ -287,7 +283,6 @@ def get_dm_thread(classroom_id, with_user_id):
 # ─── REST: mark thread as read ────────────────────────────────────────────────
 
 @dm_bp.route('/<classroom_id>/thread/<with_user_id>/read', methods=['POST'])
-@cross_origin()
 @token_required
 def mark_dm_read(classroom_id, with_user_id):
     from database import get_db
@@ -310,7 +305,6 @@ def mark_dm_read(classroom_id, with_user_id):
 # ─── REST: total unread count ─────────────────────────────────────────────────
 
 @dm_bp.route('/unread-count', methods=['GET'])
-@cross_origin()
 @token_required
 def get_dm_unread_count():
     from database import get_db
@@ -330,7 +324,6 @@ def get_dm_unread_count():
 # ─── REST: unread count per classroom ─────────────────────────────────────────
 
 @dm_bp.route('/unread-by-classroom', methods=['GET'])
-@cross_origin()
 @token_required
 def get_dm_unread_by_classroom():
     """Return { classroom_id: unread_count } for all classrooms with unread DMs."""
@@ -352,7 +345,6 @@ def get_dm_unread_by_classroom():
 # ─── REST: delete message ─────────────────────────────────────────────────────
 
 @dm_bp.route('/<classroom_id>/messages/<message_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_dm_message(classroom_id, message_id):
     from database import get_db
@@ -401,7 +393,6 @@ def delete_dm_message(classroom_id, message_id):
 # ─── REST: file serving ───────────────────────────────────────────────────────
 
 @dm_bp.route('/file/<message_id>', methods=['GET'])
-@cross_origin()
 def serve_dm_file(message_id):
     from database import get_db
     try:
@@ -447,7 +438,6 @@ def serve_dm_file(message_id):
 # ─── REST: unread count per sender in a classroom ────────────────────────────
 
 @dm_bp.route('/<classroom_id>/unread-by-sender', methods=['GET'])
-@cross_origin()
 @token_required
 def get_unread_by_sender(classroom_id):
     """Return { sender_id: unread_count } for all threads the current user has unread messages in."""
@@ -471,7 +461,6 @@ def get_unread_by_sender(classroom_id):
 # ─── REST: member DM stats (CR only) ─────────────────────────────────────────
 
 @dm_bp.route('/<classroom_id>/member-stats', methods=['GET'])
-@cross_origin()
 @token_required
 def get_member_dm_stats(classroom_id):
     """Return per-member outbound DM count in this classroom (CR only)."""

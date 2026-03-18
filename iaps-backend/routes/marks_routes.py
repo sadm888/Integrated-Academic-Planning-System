@@ -12,12 +12,11 @@ REST:
 """
 
 import os
-import uuid
+from uuid import uuid4
 import logging
 from datetime import datetime, timezone
 
 from flask import Blueprint, request, jsonify, send_file
-from flask_cors import cross_origin
 from bson import ObjectId
 import jwt
 from werkzeug.utils import secure_filename
@@ -60,7 +59,6 @@ def _check_subject_access(db, subject_id, user_id):
 # ── Exam Structure ────────────────────────────────────────────────────────────
 
 @marks_bp.route('/structure/<subject_id>', methods=['GET'])
-@cross_origin()
 @token_required
 def get_exam_structure(subject_id):
     from database import get_db
@@ -84,7 +82,6 @@ def get_exam_structure(subject_id):
 
 
 @marks_bp.route('/structure/<subject_id>', methods=['POST'])
-@cross_origin()
 @token_required
 def save_exam_structure(subject_id):
     """CR creates or replaces the exam structure for a subject."""
@@ -142,7 +139,6 @@ def save_exam_structure(subject_id):
 # ── Personal Marks ────────────────────────────────────────────────────────────
 
 @marks_bp.route('/my/<subject_id>', methods=['GET'])
-@cross_origin()
 @token_required
 def get_my_marks(subject_id):
     from database import get_db
@@ -166,7 +162,6 @@ def get_my_marks(subject_id):
 
 
 @marks_bp.route('/my/<subject_id>', methods=['POST'])
-@cross_origin()
 @token_required
 def save_my_marks(subject_id):
     """Save/update personal marks for a subject (any member)."""
@@ -236,7 +231,6 @@ def save_my_marks(subject_id):
 # ── Analytics Files ───────────────────────────────────────────────────────────
 
 @marks_bp.route('/analytics/<subject_id>', methods=['GET'])
-@cross_origin()
 @token_required
 def list_analytics(subject_id):
     from database import get_db
@@ -289,7 +283,6 @@ def list_analytics(subject_id):
 
 
 @marks_bp.route('/analytics/<subject_id>', methods=['POST'])
-@cross_origin()
 @token_required
 def upload_analytics(subject_id):
     from database import get_db
@@ -323,7 +316,7 @@ def upload_analytics(subject_id):
             visibility = 'personal'
 
         original_name = secure_filename(file.filename)
-        stored_name = f"{uuid.uuid4().hex}_{original_name}"
+        stored_name = f"{uuid4().hex}_{original_name}"
         file.save(os.path.join(ANALYTICS_DIR, stored_name))
 
         doc = {
@@ -353,7 +346,6 @@ def upload_analytics(subject_id):
 
 
 @marks_bp.route('/analytics/<subject_id>/<file_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_analytics(subject_id, file_id):
     from database import get_db
@@ -385,7 +377,6 @@ def delete_analytics(subject_id, file_id):
 
 
 @marks_bp.route('/analytics/<subject_id>/<file_id>/visibility', methods=['POST'])
-@cross_origin()
 @token_required
 def update_analytics_visibility(subject_id, file_id):
     """Update visibility of an analytics file. CR can set public/cr_only; uploader can toggle their own."""
@@ -425,7 +416,6 @@ def update_analytics_visibility(subject_id, file_id):
 
 
 @marks_bp.route('/analytics/file/<file_id>', methods=['GET'])
-@cross_origin()
 def serve_analytics_file(file_id):
     """Serve analytics file. Auth via ?token= query param."""
     from database import get_db

@@ -6,7 +6,7 @@ import FilePickerModal from '../components/FilePickerModal';
 import { sizeLabel, FileTypeIcon } from '../utils/fileUtils';
 import {
   Calendar, ClipboardList, GraduationCap, BookMarked, Folder,
-  Lock, Unlock, Eye, EyeOff, MessageSquare, Check, X,
+  Lock, Unlock, Eye, EyeOff, X,
   FileText, Link2,
 } from 'lucide-react';
 
@@ -145,7 +145,7 @@ function FileRow({ resource, onDelete, onDragStart, canDelete, isCr, semesterId,
 
 // ── Section panel ────────────────────────────────────────────────────────────
 
-function SectionPanel({ section, files, semesterId, subjectId, onDelete, onDrop, uploading, uploadProgress, onUpload, isCr, userId, onTogglePublic, onHide, folders }) {
+function SectionPanel({ section, files, semesterId, subjectId, onDelete, onDrop, uploading, uploadProgress, onUpload, isCr, userId, onTogglePublic, onHide, folders, user }) {
   const [dragOver, setDragOver] = useState(false);
   const [pendingFile, setPendingFile] = useState(null); // staged file waiting for confirm
   const [showFilePicker, setShowFilePicker] = useState(false);
@@ -204,7 +204,7 @@ function SectionPanel({ section, files, semesterId, subjectId, onDelete, onDrop,
             </button>
             {showFilePicker && (
               <FilePickerModal
-                onSelect={file => { setPendingFile(file); setShowFilePicker(false); }}
+                onSelect={file => { setShowFilePicker(false); onUpload(file, true); }}
                 onClose={() => setShowFilePicker(false)}
                 user={user}
               />
@@ -327,8 +327,6 @@ function Academics({ user }) {
   const [activeSectionId, setActiveSectionId] = useState(_savedState?.activeSectionId || null);
 
   const [resources, setResources] = useState([]);
-  const [chatFiles, setChatFiles] = useState([]);
-  const [showChatPanel, setShowChatPanel] = useState(false);
 
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -363,7 +361,6 @@ function Academics({ user }) {
   const handleChatDeleted = useCallback(({ message_id }) => {
     if (!message_id) return;
     setResources(prev => prev.filter(r => !(r.source === 'chat' && r.chat_message_id === message_id)));
-    setChatFiles(prev => prev.filter(f => f.message_id !== message_id));
   }, []);
 
   useSocket(semesterId, {
@@ -411,19 +408,16 @@ function Academics({ user }) {
     setActiveSectionId(null);
     setSectionsLoading(true);
     setResources([]);
-    setChatFiles([]);
     setError('');
     try {
-      const [secRes, resRes, cfRes, todoRes] = await Promise.all([
+      const [secRes, resRes, todoRes] = await Promise.all([
         academicAPI.getSubjectSections(semesterId, subject.id),
         academicAPI.getResources(semesterId, { subject_id: subject.id }),
-        academicAPI.getChatFiles(semesterId),
         todoAPI.list(semesterId),
       ]);
       const secs = secRes.data.sections || [];
       setSections(secs);
       setResources(resRes.data.resources || []);
-      setChatFiles(cfRes.data.chat_files || []);
       // Restore previously selected section, or default to first
       const restoredSec = opts.restoreSectionId && secs.find(s => String(s.id) === String(opts.restoreSectionId));
       if (opts.restoreFolderId !== undefined) pendingRestoreFolderRef.current = opts.restoreFolderId ?? null;
@@ -459,7 +453,6 @@ function Academics({ user }) {
     setActiveSectionId(null);
     setSections([]);
     setResources([]);
-    setChatFiles([]);
     setTodos([]);
     setNewTodoText('');
     setShowAddSection(false);
@@ -519,12 +512,8 @@ function Academics({ user }) {
 
   const reloadResources = async () => {
     if (!activeSubjectId) return;
-    const [resRes, cfRes] = await Promise.all([
-      academicAPI.getResources(semesterId, { subject_id: activeSubjectId }),
-      academicAPI.getChatFiles(semesterId),
-    ]);
+    const resRes = await academicAPI.getResources(semesterId, { subject_id: activeSubjectId });
     setResources(resRes.data.resources || []);
-    setChatFiles(cfRes.data.chat_files || []);
   };
 
   const handleUpload = async (file, sectionId, isPublic = true) => {
@@ -1004,28 +993,6 @@ function Academics({ user }) {
                 : activeSubjectName
             }
           </h2>
-          {viewLevel === 'sections' && (
-            <button
-              onClick={() => setShowChatPanel(v => !v)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                background: showChatPanel ? '#667eea' : 'rgba(102,126,234,0.1)',
-                color: showChatPanel ? 'white' : '#667eea',
-                border: 'none', borderRadius: '8px', padding: '7px 14px',
-                fontSize: '13px', fontWeight: 600, cursor: 'pointer',
-              }}
-            >
-              <MessageSquare size={14} strokeWidth={1.75} /> Chat Files
-              {chatFiles.filter(f => !f.linked).length > 0 && (
-                <span style={{
-                  background: showChatPanel ? 'rgba(255,255,255,0.3)' : '#667eea',
-                  color: 'white', borderRadius: '999px', padding: '1px 7px', fontSize: '11px',
-                }}>
-                  {chatFiles.filter(f => !f.linked).length}
-                </span>
-              )}
-            </button>
-          )}
         </div>
 
         {error && (
@@ -1127,6 +1094,7 @@ function Academics({ user }) {
                 onUpload={(file, isPublic) => handleUpload(file, activeSectionId, isPublic)}
                 isCr={isCr}
                 userId={user?.id}
+                user={user}
                 onTogglePublic={handleTogglePublic}
                 onHide={handleHideResource}
                 folders={folders}
@@ -1135,43 +1103,6 @@ function Academics({ user }) {
           )}
         </div>
 
-        {/* Chat files panel */}
-        {showChatPanel && viewLevel === 'sections' && (
-          <div style={{
-            borderTop: '2px solid var(--border-color)', background: 'var(--card-bg)',
-            padding: '14px 28px', flexShrink: 0, maxHeight: '200px', overflowY: 'auto',
-          }}>
-            <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text-primary)', marginBottom: '10px' }}>
-              Chat Files — drag into a section to organize
-            </div>
-            {chatFiles.length === 0 ? (
-              <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>No files shared in chat yet.</div>
-            ) : (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                {chatFiles.map(cf => (
-                  <div
-                    key={cf.message_id}
-                    draggable
-                    onDragStart={e => e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'chat', message_id: cf.message_id }))}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '6px',
-                      padding: '6px 10px', borderRadius: '8px',
-                      border: `1.5px solid ${cf.linked ? '#bbf7d0' : 'var(--border-color)'}`,
-                      background: cf.linked ? '#f0fdf4' : 'var(--bg-color)',
-                      cursor: 'grab', fontSize: '12px', maxWidth: '200px',
-                    }}
-                  >
-                    <FileTypeIcon mime={cf.mime_type} size={14} />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)' }}>
-                      {cf.name}
-                    </span>
-                    {cf.linked && <Check size={12} strokeWidth={2.5} style={{ color: '#16a34a', flexShrink: 0 }} />}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>{/* end centre */}
 
       {/* ── Right: Subject To-Do panel ── */}

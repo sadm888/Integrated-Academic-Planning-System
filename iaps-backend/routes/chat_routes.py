@@ -15,7 +15,6 @@ import logging
 from datetime import datetime, timezone
 
 from flask import Blueprint, request, jsonify, send_file
-from flask_cors import cross_origin
 from flask_socketio import join_room, emit
 from bson import ObjectId
 import jwt
@@ -203,7 +202,6 @@ def handle_send_message(data):
 # ─── REST: message history ────────────────────────────────────────────────────
 
 @chat_bp.route('/<semester_id>/messages', methods=['GET'])
-@cross_origin()
 @token_required
 def get_messages(semester_id):
     """Return the last N messages for a semester (oldest first)."""
@@ -250,7 +248,6 @@ def get_messages(semester_id):
 # ─── REST: file upload ────────────────────────────────────────────────────────
 
 @chat_bp.route('/<semester_id>/upload', methods=['POST'])
-@cross_origin()
 @token_required
 def upload_file(semester_id):
     """Upload a file, save a chat message, and broadcast via Socket.IO."""
@@ -317,7 +314,6 @@ def upload_file(semester_id):
 # ─── REST: file serving ───────────────────────────────────────────────────────
 
 @chat_bp.route('/file/<message_id>', methods=['GET'])
-@cross_origin()
 def serve_file(message_id):
     """Stream an uploaded chat file to the requesting member.
     Accepts JWT via Authorization header OR ?token= query param (needed for browser
@@ -365,7 +361,6 @@ def serve_file(message_id):
 # ─── REST: warn user ─────────────────────────────────────────────────────────
 
 @chat_bp.route('/<semester_id>/warn', methods=['POST'])
-@cross_origin()
 @token_required
 def warn_user(semester_id):
     """CR sends a private warning to one user — not stored in chat, not visible to others."""
@@ -443,7 +438,6 @@ def warn_user(semester_id):
 # ─── REST: user warnings (one-time popups) ───────────────────────────────────
 
 @chat_bp.route('/my-warnings', methods=['GET'])
-@cross_origin()
 @token_required
 def get_my_warnings():
     """Return unshown warnings for the current user."""
@@ -471,7 +465,6 @@ def get_my_warnings():
 
 
 @chat_bp.route('/my-warnings/<warning_id>/dismiss', methods=['POST'])
-@cross_origin()
 @token_required
 def dismiss_warning(warning_id):
     """Mark a warning as shown so it doesn't appear again."""
@@ -492,7 +485,6 @@ def dismiss_warning(warning_id):
 # ─── REST: unread counts ──────────────────────────────────────────────────────
 
 @chat_bp.route('/unread-counts', methods=['GET'])
-@cross_origin()
 @token_required
 def get_unread_counts():
     """Return {semester_id: unread_count} for all semesters the user belongs to."""
@@ -539,7 +531,6 @@ def get_unread_counts():
 # ─── REST: mark as read ───────────────────────────────────────────────────────
 
 @chat_bp.route('/<semester_id>/read', methods=['POST'])
-@cross_origin()
 @token_required
 def mark_read(semester_id):
     """Set last_read_at = now for the current user in this semester."""
@@ -563,7 +554,6 @@ def mark_read(semester_id):
 # ─── REST: pin / unpin message ────────────────────────────────────────────────
 
 @chat_bp.route('/<semester_id>/pin', methods=['POST'])
-@cross_origin()
 @token_required
 def pin_message(semester_id):
     """CR or mod pins a message. Up to 3 pinned messages (most recent first); oldest dropped when a 4th is added."""
@@ -604,7 +594,6 @@ def pin_message(semester_id):
 # ─── REST: delete message ─────────────────────────────────────────────────────
 
 @chat_bp.route('/<semester_id>/messages/<message_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_message(semester_id, message_id):
     """Delete a chat message. Author or CR/mod can delete. Cascades to academic resources."""
@@ -661,7 +650,6 @@ def delete_message(semester_id, message_id):
 
 
 @chat_bp.route('/<semester_id>/pin', methods=['DELETE'])
-@cross_origin()
 @token_required
 def unpin_message(semester_id):
     """CR or mod unpins a specific message (by message_id query param) or clears all pins."""

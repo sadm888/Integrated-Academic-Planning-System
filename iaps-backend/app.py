@@ -2,7 +2,6 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from config import Config
 from database import db
-from email_service import init_mail
 from socketio_instance import socketio
 from limiter_instance import limiter
 import logging
@@ -36,11 +35,6 @@ def create_app():
     # Initialize extensions
     limiter.init_app(app)
 
-    try:
-        init_mail(app)
-    except Exception as e:
-        logger.warning(f"Mail service failed to initialize: {e}")
-    
     # Initialize database connection
     try:
         db.connect()

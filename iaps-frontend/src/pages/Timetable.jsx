@@ -335,7 +335,7 @@ function OverrideModal({ day, slot, cell, onClose, onSave, onDeleteOverride, sel
 }
 
 // Cell detail modal for editing the base timetable slot
-function SlotEditModal({ day, slot, cell, onClose, onSave }) {
+function SlotEditModal({ day, slot, cell, onClose, onSave, onMove, editGrid, days, timeSlots }) {
   const [form, setForm] = useState({
     subject: cell?.subject || '',
     teacher: cell?.teacher || '',
@@ -345,6 +345,11 @@ function SlotEditModal({ day, slot, cell, onClose, onSave }) {
     link: cell?.link || '',
   });
   const [loading, setLoading] = useState(false);
+  const [toDay, setToDay] = useState(day);
+  const [toSlot, setToSlot] = useState('');
+
+  const targetCell = toSlot ? editGrid?.[toDay]?.[toSlot] : null;
+  const targetOccupied = !!(targetCell?.subject);
 
   const handleSave = async () => {
     setLoading(true);
@@ -356,57 +361,153 @@ function SlotEditModal({ day, slot, cell, onClose, onSave }) {
     }
   };
 
+  const handleMove = async () => {
+    if (!toSlot || targetOccupied) return;
+    setLoading(true);
+    try {
+      await onMove(day, slot, toDay, toSlot);
+      onClose();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const TYPE_COLORS = {
+    Lecture:   { bg: '#eff6ff', color: '#2563eb', border: '#bfdbfe' },
+    Lab:       { bg: '#f0fdf4', color: '#16a34a', border: '#bbf7d0' },
+    Tutorial:  { bg: '#faf5ff', color: '#7c3aed', border: '#e9d5ff' },
+    Free:      { bg: 'var(--bg-color)', color: 'var(--text-secondary)', border: 'var(--border-color)' },
+    Lunch:     { bg: '#fff7ed', color: '#ea580c', border: '#fed7aa' },
+    Library:   { bg: '#f0fdfa', color: '#0d9488', border: '#99f6e4' },
+    Cancelled: { bg: '#fef2f2', color: '#dc2626', border: '#fecaca' },
+  };
+  const TYPES = Object.keys(TYPE_COLORS);
+
+  const fieldStyle = {
+    width: '100%', padding: '8px 12px', borderRadius: '8px', fontSize: '13px',
+    border: '1.5px solid var(--border-color)', background: 'var(--bg-color)',
+    color: 'var(--text-primary)', outline: 'none', boxSizing: 'border-box',
+  };
+  const labelStyle = { fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '5px', display: 'block' };
+  const rowStyle = { marginBottom: '12px' };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" style={{ maxWidth: '420px' }} onClick={e => e.stopPropagation()}>
-        <h2>Edit Slot: {day} · {slot}</h2>
-        <div className="form-group">
-          <label>Type</label>
-          <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
-            <option>Lecture</option>
-            <option>Lab</option>
-            <option>Tutorial</option>
-            <option>Free</option>
-            <option>Lunch</option>
-            <option>Library</option>
-            <option>Cancelled</option>
-          </select>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: 'var(--card-bg)', borderRadius: '16px', width: '100%', maxWidth: '440px',
+        boxShadow: '0 24px 64px rgba(0,0,0,0.35)', overflow: 'hidden',
+      }}>
+        {/* Header */}
+        <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>
+              {cell?.subject ? 'Edit Class' : 'Add Class'}
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+              {day} · {slot}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '20px', lineHeight: 1, padding: '4px' }}>×</button>
         </div>
-        <div className="form-group">
-          <label>Subject</label>
-          <input value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} placeholder="e.g. Engineering Mathematics" />
+
+        {/* Body */}
+        <div style={{ padding: '18px 20px', maxHeight: '70vh', overflowY: 'auto' }}>
+          {/* Type chips */}
+          <div style={rowStyle}>
+            <label style={labelStyle}>Type</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+              {TYPES.map(t => {
+                const c = TYPE_COLORS[t];
+                const active = form.type === t;
+                return (
+                  <button key={t} type="button" onClick={() => setForm({ ...form, type: t })} style={{
+                    padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                    border: `1.5px solid ${active ? c.border : 'var(--border-color)'}`,
+                    background: active ? c.bg : 'transparent',
+                    color: active ? c.color : 'var(--text-secondary)',
+                    transition: 'all 0.15s',
+                  }}>{t}</button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Subject + Teacher row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
+            <div>
+              <label style={labelStyle}>Subject</label>
+              <input style={fieldStyle} value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} placeholder="e.g. Maths" />
+            </div>
+            <div>
+              <label style={labelStyle}>Teacher</label>
+              <input style={fieldStyle} value={form.teacher} onChange={e => setForm({ ...form, teacher: e.target.value })} placeholder="Faculty name" />
+            </div>
+          </div>
+
+          {/* Room + Link row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
+            <div>
+              <label style={labelStyle}>Room</label>
+              <input style={fieldStyle} value={form.room} onChange={e => setForm({ ...form, room: e.target.value })} placeholder="Room / Lab" />
+            </div>
+            <div>
+              <label style={labelStyle}>Link</label>
+              <input style={fieldStyle} value={form.link} onChange={e => setForm({ ...form, link: e.target.value })} placeholder="https://…" type="url" />
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div style={rowStyle}>
+            <label style={labelStyle}>Notes</label>
+            <textarea style={{ ...fieldStyle, resize: 'vertical' }} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes…" rows={2} />
+          </div>
+
+          {/* Reschedule */}
+          {cell?.subject && onMove && days?.length > 0 && timeSlots?.length > 0 && (
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '14px', marginTop: '4px' }}>
+              <label style={labelStyle}>Move to different slot</label>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                <select value={toDay} onChange={e => { setToDay(e.target.value); setToSlot(''); }} style={{ ...fieldStyle, flex: 1 }}>
+                  {days.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+                <select value={toSlot} onChange={e => setToSlot(e.target.value)} style={{ ...fieldStyle, flex: 1 }}>
+                  <option value="">Pick time</option>
+                  {timeSlots.filter(s => !(s === slot && toDay === day)).map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              {toSlot && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: targetOccupied ? '#dc2626' : '#16a34a' }}>
+                    {targetOccupied ? `⚠ ${toDay} · ${toSlot} is occupied` : `✓ ${toDay} · ${toSlot} is free`}
+                  </span>
+                  <button type="button" onClick={handleMove} disabled={loading || targetOccupied} style={{
+                    marginLeft: 'auto', padding: '5px 16px', fontSize: '12px', fontWeight: 600, borderRadius: '8px', border: 'none', cursor: targetOccupied ? 'not-allowed' : 'pointer',
+                    background: targetOccupied ? 'var(--border-color)' : '#667eea', color: targetOccupied ? 'var(--text-secondary)' : 'white',
+                  }}>
+                    {loading ? '…' : 'Move'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-        <div className="form-group">
-          <label>Teacher</label>
-          <input value={form.teacher} onChange={e => setForm({ ...form, teacher: e.target.value })} placeholder="Faculty name" />
-        </div>
-        <div className="form-group">
-          <label>Room / Location</label>
-          <input value={form.room} onChange={e => setForm({ ...form, room: e.target.value })} placeholder="Room number or lab name" />
-        </div>
-        <div className="form-group">
-          <label>Class Notes / Info</label>
-          <textarea
-            value={form.notes}
-            onChange={e => setForm({ ...form, notes: e.target.value })}
-            placeholder="Optional: notes, syllabus reference, etc."
-            rows={2}
-            style={{ resize: 'vertical' }}
-          />
-        </div>
-        <div className="form-group">
-          <label>Link (Meet / Slides / etc.)</label>
-          <input
-            value={form.link}
-            onChange={e => setForm({ ...form, link: e.target.value })}
-            placeholder="https://..."
-            type="url"
-          />
-        </div>
-        <div className="modal-buttons">
-          <button type="button" onClick={onClose} disabled={loading}>Cancel</button>
-          <button type="button" onClick={handleSave} disabled={loading}>
-            {loading ? 'Saving...' : 'Save'}
+
+        {/* Footer */}
+        <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border-color)', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+          <button type="button" onClick={onClose} disabled={loading} style={{ padding: '7px 16px', borderRadius: '8px', border: '1.5px solid var(--border-color)', background: 'transparent', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+            Cancel
+          </button>
+          {cell?.subject && (
+            <button type="button" disabled={loading} onClick={async () => {
+              setLoading(true);
+              try { await onSave(day, slot, { subject: '', teacher: '', room: '', type: 'Free', notes: '', link: '' }); onClose(); }
+              finally { setLoading(false); }
+            }} style={{ padding: '7px 16px', borderRadius: '8px', border: '1.5px solid #fecaca', background: '#fef2f2', color: '#dc2626', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+              {loading ? '…' : 'Delete'}
+            </button>
+          )}
+          <button type="button" onClick={handleSave} disabled={loading} style={{ padding: '7px 20px', borderRadius: '8px', border: 'none', background: '#667eea', color: 'white', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+            {loading ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>
@@ -905,6 +1006,15 @@ export default function Timetable({ user }) {
     const newGrid = JSON.parse(JSON.stringify(editGrid));
     if (!newGrid[day]) newGrid[day] = {};
     newGrid[day][slot] = values;
+    setEditGrid(newGrid);
+  };
+
+  const handleSlotMove = async (fromDay, fromSlot, toDay, toSlot) => {
+    const newGrid = JSON.parse(JSON.stringify(editGrid));
+    const cell = newGrid[fromDay]?.[fromSlot] || {};
+    if (!newGrid[toDay]) newGrid[toDay] = {};
+    newGrid[toDay][toSlot] = { ...cell };
+    newGrid[fromDay][fromSlot] = { subject: '', teacher: '', room: '', type: 'Free', notes: '', link: '' };
     setEditGrid(newGrid);
   };
 
@@ -1673,6 +1783,10 @@ export default function Timetable({ user }) {
           cell={slotEditModal.cell}
           onClose={() => setSlotEditModal(null)}
           onSave={handleSlotEditSave}
+          onMove={handleSlotMove}
+          editGrid={editGrid}
+          days={timetable?.days || []}
+          timeSlots={timetable?.time_slots || []}
         />
       )}
 

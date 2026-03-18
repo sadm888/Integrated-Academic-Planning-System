@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { semesterAPI, marksAPI, subjectAPI } from '../services/api';
 import '../styles/Classroom.css';
 import { Edit2, Check, X, Plus, Upload, FileText } from 'lucide-react';
+import FilePickerModal from '../components/FilePickerModal';
 
 function MarksDetail({ user }) {
   const { classroomId, semesterId, subjectId } = useParams();
@@ -35,6 +36,7 @@ function MarksDetail({ user }) {
   // Analytics
   const [analytics, setAnalytics] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [showFilePicker, setShowFilePicker] = useState(false);
 
   // Course details editing
   const [editingDetails, setEditingDetails] = useState(false);
@@ -204,10 +206,7 @@ function MarksDetail({ user }) {
   };
 
   // ── Analytics ─────────────────────────────────────────────────────────────────
-  const handleUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = '';
+  const uploadFile = async (file) => {
     setUploading(true);
     try {
       const fd = new FormData();
@@ -218,6 +217,13 @@ function MarksDetail({ user }) {
       setSuccess('File uploaded');
     } catch (err) { setError(err.response?.data?.error || 'Upload failed'); }
     finally { setUploading(false); }
+  };
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    await uploadFile(file);
   };
 
   const handleDeleteAnalytics = async (fileId) => {
@@ -698,17 +704,40 @@ function MarksDetail({ user }) {
                 }
               </p>
             </div>
-            <label style={{
-              display: 'inline-flex', alignItems: 'center', gap: '6px',
-              padding: '7px 14px', borderRadius: '8px',
-              background: '#667eea', color: 'white', fontSize: '12px',
-              fontWeight: 600, cursor: uploading ? 'not-allowed' : 'pointer',
-              opacity: uploading ? 0.6 : 1,
-            }}>
-              <Upload size={13} />
-              {uploading ? 'Uploading...' : 'Upload'}
-              <input type="file" onChange={handleUpload} style={{ display: 'none' }} disabled={uploading} />
-            </label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                onClick={() => setShowFilePicker(true)}
+                disabled={uploading}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '6px',
+                  padding: '7px 14px', borderRadius: '8px',
+                  background: 'rgba(102,126,234,0.1)', color: '#667eea',
+                  border: '1px solid rgba(102,126,234,0.3)', fontSize: '12px',
+                  fontWeight: 600, cursor: uploading ? 'not-allowed' : 'pointer',
+                  opacity: uploading ? 0.6 : 1,
+                }}
+              >
+                Files
+              </button>
+              <label style={{
+                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                padding: '7px 14px', borderRadius: '8px',
+                background: '#667eea', color: 'white', fontSize: '12px',
+                fontWeight: 600, cursor: uploading ? 'not-allowed' : 'pointer',
+                opacity: uploading ? 0.6 : 1,
+              }}>
+                <Upload size={13} />
+                {uploading ? 'Uploading...' : 'Upload'}
+                <input type="file" onChange={handleUpload} style={{ display: 'none' }} disabled={uploading} />
+              </label>
+            </div>
+            {showFilePicker && (
+              <FilePickerModal
+                onSelect={file => { setShowFilePicker(false); uploadFile(file); }}
+                onClose={() => setShowFilePicker(false)}
+                user={user}
+              />
+            )}
           </div>
 
           {analytics.length === 0 ? (

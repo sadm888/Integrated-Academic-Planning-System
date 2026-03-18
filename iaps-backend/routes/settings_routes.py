@@ -1,18 +1,14 @@
 from flask import Blueprint, request, jsonify, send_file
-from flask_cors import cross_origin
-from flask_mail import Message
 from datetime import datetime, timedelta, timezone
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from bson import ObjectId
 import jwt
-import random
 import os
 import logging
 
 from database import db
 from middleware import token_required, SECRET_KEY
-from email_service import mail
 from utils.mime_check import is_image, is_dangerous
 
 settings_bp = Blueprint('settings', __name__, url_prefix='/api/settings')
@@ -52,94 +48,12 @@ def _format_user(user):
     }
 
 
-def _generate_otp():
-    return ''.join(random.choices('0123456789', k=6))
-
-
-def _send_otp_email(email, otp, subject_action):
-    try:
-        html_body = f"""
-        <html>
-            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                    <h2 style="color: #667eea;">IAPS Verification Code</h2>
-                    <p>Your code to {subject_action} is:</p>
-                    <div style="text-align: center; margin: 30px 0;">
-                        <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px;
-                                     color: #667eea; background: #f0f0ff; padding: 16px 32px;
-                                     border-radius: 8px; display: inline-block;">
-                            {otp}
-                        </span>
-                    </div>
-                    <p style="color: #666; font-size: 14px;">
-                        This code is valid for <strong>15 minutes</strong>.
-                        If you did not request this, you can safely ignore this email.
-                    </p>
-                </div>
-            </body>
-        </html>
-        """
-        msg = Message(
-            subject=f"IAPS — Your verification code",
-            recipients=[email],
-            html=html_body
-        )
-        mail.send(msg)
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send OTP email: {e}")
-        return False
-
-
-def _store_otp(user_id, otp_type, otp, new_value=None):
-    database = db.get_db()
-    # Remove any existing OTPs of the same type for this user
-    database.verification_tokens.delete_many({
-        'userId': user_id,
-        'type': otp_type
-    })
-    database.verification_tokens.insert_one({
-        'token': otp,
-        'type': otp_type,
-        'userId': user_id,
-        'newValue': new_value,
-        'expiresAt': datetime.now(timezone.utc) + timedelta(minutes=15),
-        'createdAt': datetime.now(timezone.utc)
-    })
-
-
-MAX_OTP_ATTEMPTS = 5
-
-def _verify_otp(user_id, otp_type, otp):
-    database = db.get_db()
-    # Find by user + type (not by token value, so we can count attempts)
-    token_doc = database.verification_tokens.find_one({
-        'type': otp_type,
-        'userId': user_id,
-    })
-    if not token_doc:
-        return None
-    if datetime.now(timezone.utc) > token_doc['expiresAt']:
-        database.verification_tokens.delete_one({'_id': token_doc['_id']})
-        return None
-    if token_doc.get('failedAttempts', 0) >= MAX_OTP_ATTEMPTS:
-        database.verification_tokens.delete_one({'_id': token_doc['_id']})
-        return None
-    if token_doc['token'] != otp:
-        database.verification_tokens.update_one(
-            {'_id': token_doc['_id']},
-            {'$inc': {'failedAttempts': 1}}
-        )
-        return None
-    database.verification_tokens.delete_one({'_id': token_doc['_id']})
-    return token_doc
 
 
 # ---------------------------------------------------------------------------
 # POST /api/settings/verify-password  (used to gate personal docs in chat)
 # ---------------------------------------------------------------------------
 @settings_bp.route('/verify-password', methods=['POST'])
-@cross_origin()
 @token_required
 def verify_password():
     try:
@@ -290,7 +204,7 @@ def upload_avatar():
 
 
 # ---------------------------------------------------------------------------
-# GET /api/settings/avatar/<user_id>  (public — no auth)
+# GET /api/settings/avatar/<user_id>  (public — thumbnails, no auth)
 # ---------------------------------------------------------------------------
 @settings_bp.route('/avatar/<user_id>', methods=['GET'])
 def serve_avatar(user_id):
@@ -311,44 +225,81 @@ def serve_avatar(user_id):
 
 
 # ---------------------------------------------------------------------------
-# POST /api/settings/change-password-request
+# GET /api/settings/avatar-token/<user_id>  (auth required — get signed token)
 # ---------------------------------------------------------------------------
-@settings_bp.route('/change-password-request', methods=['POST'])
+@settings_bp.route('/avatar-token/<user_id>', methods=['GET'])
 @token_required
-def change_password_request():
+def get_avatar_token(user_id):
+    """Return a short-lived signed token allowing the caller to fetch the fullscreen avatar."""
     try:
         database = db.get_db()
-        user = database.users.find_one({'_id': ObjectId(request.user['user_id'])})
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
+        target = database.users.find_one({'_id': ObjectId(user_id)})
+        if not target or not target.get('profile_picture'):
+            return jsonify({'error': 'Avatar not found'}), 404
 
-        otp = _generate_otp()
-        _store_otp(str(user['_id']), 'password_change', otp)
-
-        sent = _send_otp_email(user['email'], otp, 'change your password')
-        if not sent:
-            return jsonify({'error': 'Failed to send OTP email'}), 500
-
-        return jsonify({'message': f'OTP sent to {user["email"]}'}), 200
+        sig_payload = {
+            'target': user_id,
+            'viewer': request.user['user_id'],
+            'exp': datetime.now(timezone.utc) + timedelta(minutes=2),
+        }
+        sig_token = jwt.encode(sig_payload, SECRET_KEY, algorithm='HS256')
+        return jsonify({'token': sig_token}), 200
     except Exception as e:
-        logger.error(f"change_password_request error: {e}")
-        return jsonify({'error': 'Failed to send OTP'}), 500
+        logger.error(f"get_avatar_token error: {e}")
+        return jsonify({'error': 'Failed to generate token'}), 500
 
 
 # ---------------------------------------------------------------------------
-# POST /api/settings/change-password-confirm
+# GET /api/settings/avatar/full/<user_id>?sig=<token>  (signed — fullscreen)
 # ---------------------------------------------------------------------------
-@settings_bp.route('/change-password-confirm', methods=['POST'])
+@settings_bp.route('/avatar/full/<user_id>', methods=['GET'])
+def serve_avatar_fullscreen(user_id):
+    """Serve full-resolution avatar — requires a short-lived signed token."""
+    try:
+        sig = request.args.get('sig', '')
+        if not sig:
+            return jsonify({'error': 'Missing signature'}), 401
+
+        try:
+            data = jwt.decode(sig, SECRET_KEY, algorithms=['HS256'])
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Link expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid signature'}), 401
+
+        if data.get('target') != user_id:
+            return jsonify({'error': 'Token mismatch'}), 403
+
+        database = db.get_db()
+        user = database.users.find_one({'_id': ObjectId(user_id)})
+        if not user or not user.get('profile_picture'):
+            return jsonify({'error': 'Avatar not found'}), 404
+
+        filepath = os.path.join(AVATARS_DIR, user['profile_picture'])
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'Avatar file not found'}), 404
+
+        response = send_file(filepath)
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+    except Exception as e:
+        logger.error(f"serve_avatar_fullscreen error: {e}")
+        return jsonify({'error': 'Failed to serve avatar'}), 500
+
+
+# ---------------------------------------------------------------------------
+# POST /api/settings/change-password
+# ---------------------------------------------------------------------------
+@settings_bp.route('/change-password', methods=['POST'])
 @token_required
-def change_password_confirm():
+def change_password():
     try:
         data = request.get_json()
-        otp = data.get('otp', '').strip()
         current_password = data.get('current_password', '')
         new_password = data.get('new_password', '')
 
-        if not all([otp, current_password, new_password]):
-            return jsonify({'error': 'OTP, current password, and new password are required'}), 400
+        if not all([current_password, new_password]):
+            return jsonify({'error': 'Current password and new password are required'}), 400
 
         if len(new_password) < 8:
             return jsonify({'error': 'New password must be at least 8 characters'}), 400
@@ -362,89 +313,13 @@ def change_password_confirm():
         if not check_password_hash(user.get('password', ''), current_password):
             return jsonify({'error': 'Current password is incorrect'}), 400
 
-        token_doc = _verify_otp(user_id, 'password_change', otp)
-        if not token_doc:
-            return jsonify({'error': 'Invalid or expired OTP'}), 400
-
         hashed = generate_password_hash(new_password)
         database.users.update_one({'_id': ObjectId(user_id)}, {'$set': {'password': hashed}})
 
         return jsonify({'message': 'Password changed successfully'}), 200
     except Exception as e:
-        logger.error(f"change_password_confirm error: {e}")
+        logger.error(f"change_password error: {e}")
         return jsonify({'error': 'Failed to change password'}), 500
-
-
-# ---------------------------------------------------------------------------
-# POST /api/settings/change-email-request
-# ---------------------------------------------------------------------------
-@settings_bp.route('/change-email-request', methods=['POST'])
-@token_required
-def change_email_request():
-    try:
-        data = request.get_json()
-        new_email = data.get('new_email', '').strip().lower()
-
-        if not new_email:
-            return jsonify({'error': 'New email is required'}), 400
-
-        database = db.get_db()
-        if database.users.find_one({'email': new_email}):
-            return jsonify({'error': 'Email already in use'}), 400
-
-        user_id = request.user['user_id']
-        otp = _generate_otp()
-        _store_otp(user_id, 'email_change', otp, new_value=new_email)
-
-        sent = _send_otp_email(new_email, otp, 'verify your new email')
-        if not sent:
-            return jsonify({'error': 'Failed to send OTP email'}), 500
-
-        return jsonify({'message': f'OTP sent to {new_email}'}), 200
-    except Exception as e:
-        logger.error(f"change_email_request error: {e}")
-        return jsonify({'error': 'Failed to send OTP'}), 500
-
-
-# ---------------------------------------------------------------------------
-# POST /api/settings/change-email-confirm
-# ---------------------------------------------------------------------------
-@settings_bp.route('/change-email-confirm', methods=['POST'])
-@token_required
-def change_email_confirm():
-    try:
-        data = request.get_json()
-        otp = data.get('otp', '').strip()
-
-        if not otp:
-            return jsonify({'error': 'OTP is required'}), 400
-
-        user_id = request.user['user_id']
-        token_doc = _verify_otp(user_id, 'email_change', otp)
-        if not token_doc:
-            return jsonify({'error': 'Invalid or expired OTP'}), 400
-
-        new_email = token_doc.get('newValue')
-        if not new_email:
-            return jsonify({'error': 'No pending email change found'}), 400
-
-        database = db.get_db()
-        # Double-check uniqueness
-        if database.users.find_one({'email': new_email}):
-            return jsonify({'error': 'Email already in use'}), 400
-
-        database.users.update_one({'_id': ObjectId(user_id)}, {'$set': {'email': new_email}})
-        user = database.users.find_one({'_id': ObjectId(user_id)})
-        new_token = _create_token(user)
-
-        return jsonify({
-            'message': 'Email changed successfully',
-            'token': new_token,
-            'user': _format_user(user)
-        }), 200
-    except Exception as e:
-        logger.error(f"change_email_confirm error: {e}")
-        return jsonify({'error': 'Failed to change email'}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -559,7 +434,6 @@ MAX_PERSONAL_DOC_SIZE = 20 * 1024 * 1024  # 20 MB
 
 
 @settings_bp.route('/personal-docs', methods=['GET'])
-@cross_origin()
 @token_required
 def list_personal_docs():
     """List the current user's personal documents."""
@@ -587,7 +461,6 @@ def list_personal_docs():
 
 
 @settings_bp.route('/personal-docs/upload', methods=['POST'])
-@cross_origin()
 @token_required
 def upload_personal_doc():
     """Upload a personal document with a label."""
@@ -640,7 +513,6 @@ def upload_personal_doc():
 
 
 @settings_bp.route('/personal-docs/<doc_id>', methods=['GET'])
-@cross_origin()
 def download_personal_doc(doc_id):
     """Serve a personal document — owner only, token from header or ?token= query param."""
     try:
@@ -674,7 +546,6 @@ def download_personal_doc(doc_id):
 
 
 @settings_bp.route('/personal-docs/<doc_id>', methods=['DELETE'])
-@cross_origin()
 @token_required
 def delete_personal_doc(doc_id):
     """Delete a personal document."""

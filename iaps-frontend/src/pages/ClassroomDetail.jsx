@@ -48,8 +48,46 @@ function ClassroomDetail({ user, onDmRead }) {
   const [removeMemberReason, setRemoveMemberReason] = useState('');
   const [removeMemberLoading, setRemoveMemberLoading] = useState(false);
   const [removedNotification, setRemovedNotification] = useState(null); // { classroom_name, removed_by, reason }
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [leaveError, setLeaveError] = useState('');
+  const [leaveLoading, setLeaveLoading] = useState(false);
   const dmBottomRef = useRef(null);
   const dmFileInputRef = useRef(null);
+  const [photoBlurred, setPhotoBlurred] = useState(false);
+  const [photoWatermark, setPhotoWatermark] = useState(false);
+
+  // Blur on focus loss (Alt+Tab, window switch)
+  useEffect(() => {
+    if (!fullscreenPhoto) return;
+    setPhotoBlurred(false);
+    const onHide = () => setPhotoBlurred(true);
+    const onShow = () => setPhotoBlurred(false);
+    const onVisibility = () => (document.hidden ? onHide() : onShow());
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('blur', onHide);
+    window.addEventListener('focus', onShow);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('blur', onHide);
+      window.removeEventListener('focus', onShow);
+    };
+  }, [fullscreenPhoto]);
+
+  // Screenshot key detection — fires on keydown so blur+watermark appear BEFORE screenshot is captured
+  useEffect(() => {
+    if (!fullscreenPhoto) return;
+    const onKey = (e) => {
+      const isPrintScreen = e.key === 'PrintScreen';
+      const isMacShot = e.metaKey && e.shiftKey && ['3', '4', '5'].includes(e.key);
+      if (isPrintScreen || isMacShot) {
+        setPhotoBlurred(true);
+        setPhotoWatermark(true);
+        setTimeout(() => { setPhotoBlurred(false); setPhotoWatermark(false); }, 2000);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreenPhoto]);
 
   useEffect(() => { loadClassroomData(); }, [classroomId]);
 
@@ -295,10 +333,6 @@ function ClassroomDetail({ user, onDmRead }) {
       setFlagNameLoading(false);
     }
   };
-
-  const [showLeaveModal, setShowLeaveModal] = useState(false);
-  const [leaveError, setLeaveError] = useState('');
-  const [leaveLoading, setLeaveLoading] = useState(false);
 
   const handleLeaveConfirm = async () => {
     setLeaveLoading(true);
@@ -708,7 +742,17 @@ function ClassroomDetail({ user, onDmRead }) {
                     <div style={{ position: 'relative', flexShrink: 0 }}>
                       <div
                         style={{ cursor: member.profile_picture ? 'pointer' : 'default' }}
-                        onClick={() => member.profile_picture && setFullscreenPhoto({ url: settingsAPI.getAvatarUrl(member.id), userId: member.id, name: member.fullName || member.username })}
+                        onClick={async () => {
+                          if (!member.profile_picture) return;
+                          setPhotoBlurred(false); setPhotoWatermark(false);
+                          setFullscreenPhoto({ url: null, userId: member.id, name: member.fullName || member.username });
+                          try {
+                            const signedUrl = await settingsAPI.getSignedAvatarUrl(member.id);
+                            setFullscreenPhoto({ url: signedUrl, userId: member.id, name: member.fullName || member.username });
+                          } catch {
+                            setFullscreenPhoto(null);
+                          }
+                        }}
                         title={member.profile_picture ? 'View full photo' : ''}
                       >
                         <Avatar user={member} size={40} />
@@ -1188,12 +1232,41 @@ function ClassroomDetail({ user, onDmRead }) {
             zIndex: 1000, cursor: 'zoom-out', gap: '16px',
           }}
         >
-          <img
-            src={fullscreenPhoto.url}
-            alt="Profile"
-            style={{ maxWidth: '80vw', maxHeight: '70vh', borderRadius: '12px', objectFit: 'contain', boxShadow: '0 8px 40px rgba(0,0,0,0.5)', cursor: 'default' }}
+          <div
             onClick={e => e.stopPropagation()}
-          />
+            onContextMenu={e => e.preventDefault()}
+            style={{ position: 'relative', display: 'inline-block', lineHeight: 0 }}
+          >
+            {!fullscreenPhoto.url && (
+              <div style={{ width: '120px', height: '120px', borderRadius: '12px', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px' }}>Loading...</span>
+              </div>
+            )}
+            <img
+              src={fullscreenPhoto.url || ''}
+              alt="Profile"
+              draggable={false}
+              style={{
+                maxWidth: '80vw', maxHeight: '70vh', borderRadius: '12px',
+                objectFit: 'contain', boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+                cursor: 'default', display: fullscreenPhoto.url ? 'block' : 'none',
+                filter: photoBlurred ? 'blur(20px)' : 'none',
+                transition: 'filter 0.2s',
+                userSelect: 'none', WebkitUserSelect: 'none', pointerEvents: 'none',
+              }}
+            />
+            {/* Watermark — only shown when screenshot key detected */}
+            {photoWatermark && (
+              <div style={{
+                position: 'absolute', inset: 0, borderRadius: '12px', overflow: 'hidden',
+                pointerEvents: 'none',
+                backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(
+                  `<svg xmlns='http://www.w3.org/2000/svg' width='280' height='110'><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='14' fill='rgba(255,255,255,0.45)' transform='rotate(-25 140 55)'>${user?.username || ''} • ${new Date().toLocaleString()}</text></svg>`
+                )}")`,
+                backgroundRepeat: 'repeat',
+              }} />
+            )}
+          </div>
           <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: '15px', fontWeight: 600 }}>
             {fullscreenPhoto.name}
           </span>
