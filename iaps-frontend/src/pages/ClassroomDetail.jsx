@@ -41,7 +41,7 @@ function ClassroomDetail({ user, onDmRead }) {
   const [pendingDmFile, setPendingDmFile] = useState(null);
   const [memberDmStats, setMemberDmStats] = useState({}); // { user_id: count }
   const [unreadBySender, setUnreadBySender] = useState({}); // { user_id: unread_count }
-  const [activity, setActivity] = useState(null); // { announcements, unread_chat, pending_requests }
+  const [activity, setActivity] = useState({ announcements: [], unread_chat: {}, pending_requests: null });
   const [crNotifications, setCrNotifications] = useState([]);
   const [pendingNominations, setPendingNominations] = useState([]);
   const [removeMemberTarget, setRemoveMemberTarget] = useState(null); // { id, name }
@@ -629,9 +629,7 @@ function ClassroomDetail({ user, onDmRead }) {
           <Bell size={15} strokeWidth={1.75} /> Recent Activity
         </div>
 
-        {!activity ? (
-          <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: 0 }}>Loading...</p>
-        ) : (activity.announcements.length === 0 && Object.keys(activity.unread_chat).length === 0 && !activity.pending_requests) ? (
+        {(activity.announcements.length === 0 && Object.keys(activity.unread_chat).length === 0 && !activity.pending_requests) ? (
           <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: 0 }}>No recent activity.</p>
         ) : (
           <>
