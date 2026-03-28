@@ -1,3 +1,13 @@
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+@keyframes slideUpSheet {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
 .classroom-container {
   max-width: 1200px;
   margin: 0 auto;
@@ -46,34 +56,34 @@
 }
 
 .page-subnav-item:hover {
-  color: #667eea;
-  background: rgba(102, 126, 234, 0.05);
+  color: var(--primary-color);
+  background: var(--primary-faint);
 }
 
 .page-subnav-item.accent {
-  color: #667eea;
-  border-bottom-color: #667eea;
+  color: var(--primary-color);
+  border-bottom-color: var(--primary-color);
 }
 
 .page-subnav-item.accent:hover {
-  background: rgba(102, 126, 234, 0.07);
+  background: var(--primary-faint);
 }
 
 .page-subnav-item.warning {
-  color: #d97706;
+  color: var(--warning-color);
 }
 
 .page-subnav-item.warning:hover {
-  color: #92400e;
+  color: var(--warning-text);
   background: rgba(245, 158, 11, 0.07);
 }
 
 .page-subnav-item.danger {
-  color: #ef4444;
+  color: var(--danger-color);
 }
 
 .page-subnav-item.danger:hover {
-  color: #dc2626;
+  color: var(--danger-color);
   background: rgba(220, 38, 38, 0.06);
 }
 
@@ -108,8 +118,8 @@
 }
 
 .btn-primary {
-  background: #667eea;
-  color: white;
+  background: var(--primary-color);
+  color: var(--text-on-primary);
 }
 
 .btn-primary:hover {
@@ -117,13 +127,13 @@
 }
 
 .btn-secondary {
-  background: rgba(102, 126, 234, 0.1);
-  color: #667eea;
+  background: var(--primary-subtle);
+  color: var(--primary-color);
   border: none;
 }
 
 .btn-secondary:hover {
-  background: rgba(102, 126, 234, 0.18);
+  background: var(--primary-medium);
 }
 
 .error-message,
@@ -135,15 +145,15 @@
 }
 
 .error-message {
-  background-color: #fee;
-  color: #c33;
-  border-left: 4px solid #c33;
+  background-color: var(--error-bg);
+  color: var(--error-text);
+  border-left: 4px solid var(--error-border);
 }
 
 .success-message {
-  background-color: #efe;
-  color: #3c3;
-  border-left: 4px solid #3c3;
+  background-color: var(--success-bg);
+  color: var(--success-text);
+  border-left: 4px solid var(--success-border);
 }
 
 .classrooms-section {
@@ -176,8 +186,8 @@
 
 .classroom-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
-  border-color: #667eea;
+  box-shadow: 0 8px 20px var(--overlay-bg);
+  border-color: var(--primary-color);
 }
 
 .classroom-header {
@@ -202,12 +212,12 @@
 }
 
 .classroom-badge.teacher {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: var(--badge-teacher-bg);
+  color: var(--badge-teacher-text);
 }
 
 .classroom-subject {
-  color: #667eea;
+  color: var(--primary-color);
   font-weight: 600;
   font-size: 14px;
   margin: 8px 0;
@@ -257,7 +267,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-bg);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -313,8 +323,8 @@
 .modal-content .form-group input:focus,
 .modal-content .form-group textarea:focus {
   outline: none;
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-subtle);
 }
 
 .modal-content .form-group small {
@@ -352,13 +362,13 @@
 }
 
 .modal-buttons button[type="submit"] {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+  color: var(--text-on-primary);
 }
 
 .modal-buttons button[type="submit"]:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+  box-shadow: 0 5px 15px var(--primary-focus);
 }
 
 .modal-buttons button:disabled {

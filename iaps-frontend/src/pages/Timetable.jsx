@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Upload, Plus, X, Edit2, AlertTriangle, CheckCircle, RefreshCw, Calendar, ChevronLeft, ChevronRight, Printer, BookOpen, FileDown, GraduationCap } from 'lucide-react';
-import { timetableAPI } from '../services/api';
+import { timetableAPI, semesterAPI } from '../services/api';
 import '../styles/Classroom.css';
 
 // ── Color helpers ─────────────────────────────────────────────────────────────
@@ -862,6 +862,7 @@ export default function Timetable({ user }) {
   const navigate = useNavigate();
 
   const [timetable, setTimetable] = useState(null);
+  const [semester, setSemester] = useState(null);
   const [weekGrid, setWeekGrid] = useState({});
   const [weekStart, setWeekStart] = useState('');
   const [isCr, setIsCr] = useState(false);
@@ -928,12 +929,14 @@ export default function Timetable({ user }) {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [weekRes, baseRes] = await Promise.all([
+      const [weekRes, baseRes, semRes] = await Promise.all([
         timetableAPI.getWeek(semesterId, getWeekDate()),
         timetableAPI.get(semesterId),
+        semesterAPI.getDetail(semesterId),
       ]);
       setTimetable(baseRes.data.timetable);
       setIsCr(baseRes.data.is_cr);
+      setSemester(semRes.data.semester);
       setWeekGrid(weekRes.data.week_grid || {});
       setWeekStart(weekRes.data.week_start || '');
       setAcEvents(weekRes.data.ac_events || {});
@@ -1558,6 +1561,28 @@ export default function Timetable({ user }) {
             </div>
           </div>
         )}
+        <div style={{ marginBottom: '4px' }}>
+          <button onClick={() => navigate(`/classroom/${classroomId}`)} style={{
+            background: 'none', border: 'none', color: '#667eea',
+            cursor: 'pointer', fontSize: '13px', marginBottom: '10px', padding: 0,
+          }}>
+            &larr; Back to Classroom
+          </button>
+          {semester && <>
+            <h1 style={{ margin: 0 }}>{semester.name}</h1>
+            <p style={{ color: '#888', margin: '4px 0 0', fontSize: '14px' }}>
+              {semester.type} · {semester.year}{semester.session && ` · ${semester.session}`}
+            </p>
+          </>}
+        </div>
+        <div className="page-subnav">
+          <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}`}>Dashboard</Link>
+          <button className="page-subnav-item" onClick={() => navigate(`/classroom/${classroomId}/semester/${semesterId}/chat`)}>Chat</button>
+          <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/files`}>Resources</Link>
+          <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/marks`}>Marks</Link>
+          <Link className="page-subnav-item accent" to={`/classroom/${classroomId}/semester/${semesterId}/timetable`}>Timetable</Link>
+          <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/academic-calendar`}>Academic Calendar</Link>
+        </div>
         <div style={{ textAlign: 'center', padding: '60px 20px' }}>
           <Calendar size={64} strokeWidth={1.25} color="var(--primary-color)" style={{ marginBottom: '20px' }} />
           <h2 style={{ color: 'var(--text-primary)', marginBottom: '8px' }}>No timetable yet</h2>

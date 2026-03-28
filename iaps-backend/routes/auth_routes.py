@@ -11,6 +11,38 @@ auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 logger = logging.getLogger(__name__)
 
 
+def _parse_device(ua_string):
+    """Parse a human-readable device label from a User-Agent string."""
+    ua = ua_string or ''
+    if 'Windows' in ua:
+        os_name = 'Windows'
+    elif 'Macintosh' in ua or 'Mac OS X' in ua:
+        os_name = 'macOS'
+    elif 'Android' in ua:
+        os_name = 'Android'
+    elif 'iPhone' in ua or 'iPad' in ua:
+        os_name = 'iOS'
+    elif 'Linux' in ua:
+        os_name = 'Linux'
+    else:
+        os_name = 'Unknown OS'
+
+    if 'Edg/' in ua:
+        browser = 'Edge'
+    elif 'OPR/' in ua or 'Opera' in ua:
+        browser = 'Opera'
+    elif 'Chrome/' in ua and 'Safari/' in ua:
+        browser = 'Chrome'
+    elif 'Firefox/' in ua:
+        browser = 'Firefox'
+    elif 'Safari/' in ua:
+        browser = 'Safari'
+    else:
+        browser = 'Unknown Browser'
+
+    return f'{browser} on {os_name}'
+
+
 def create_token(user_data):
     """Create JWT token"""
     payload = {
@@ -123,13 +155,35 @@ def login():
             ]
         })
 
-        if not user:
-            return jsonify({'error': 'Invalid credentials'}), 401
+        ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+        ua_string = request.headers.get('User-Agent', '')
+        device = _parse_device(ua_string)
+        now = datetime.now(timezone.utc)
 
-        if 'password' not in user or not check_password_hash(user['password'], password):
+        if not user or 'password' not in user or not check_password_hash(user.get('password', ''), password):
+            # Log failed attempt (only if we know the user exists so we can associate user_id)
+            if user:
+                db.login_activity.insert_one({
+                    'user_id': str(user['_id']),
+                    'ip': ip,
+                    'device': device,
+                    'user_agent': ua_string,
+                    'status': 'failed',
+                    'logged_in_at': now,
+                })
             return jsonify({'error': 'Invalid credentials'}), 401
 
         token = create_token(user)
+
+        # Log successful login
+        db.login_activity.insert_one({
+            'user_id': str(user['_id']),
+            'ip': ip,
+            'device': device,
+            'user_agent': ua_string,
+            'status': 'success',
+            'logged_in_at': now,
+        })
 
         return jsonify({
             'message': 'Login successful',

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { settingsAPI, calendarAPI, BACKEND_URL } from '../services/api';
+import { formatDate } from '../utils/timeUtils';
 import { useTheme } from '../contexts/ThemeContext';
 import Avatar from '../components/Avatar';
 import { FileTypeIcon, sizeLabel } from '../utils/fileUtils';
 import { AlertTriangle, Pencil, Eye, Trash2, Calendar, CheckCircle } from 'lucide-react';
 
-const SECTIONS = ['Profile', 'Security', 'Appearance', 'Personal Documents', 'Connected Services'];
+const SECTIONS = ['Profile', 'Security', 'Login Activity', 'Appearance', 'Privacy', 'Personal Documents', 'Connected Services'];
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -55,12 +56,26 @@ function ProfileSection({ user, onProfileUpdate }) {
     department: user.department || '',
     phone: user.phone || '',
     phone_public: user.phone_public || false,
+    bio: user.bio || '',
   });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [avatarUploading, setAvatarUploading] = useState(false);
   const fileInputRef = useRef();
+
+  // Sync form when user prop updates (e.g. async refresh after mount)
+  useEffect(() => {
+    setForm({
+      username: user.username || '',
+      fullName: user.fullName || '',
+      college: user.college || '',
+      department: user.department || '',
+      phone: user.phone || '',
+      phone_public: user.phone_public || false,
+      bio: user.bio || '',
+    });
+  }, [user]);
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -182,6 +197,26 @@ function ProfileSection({ user, onProfileUpdate }) {
             />
           </div>
         ))}
+
+        {/* Bio */}
+        <div style={fieldGroupStyle}>
+          <label style={labelStyle}>
+            Bio <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: '12px' }}>(optional · max 200 chars)</span>
+          </label>
+          {user.bio_flagged_reason && (
+            <div style={{ background: 'var(--warning-bg)', border: '1px solid var(--warning-border)', borderRadius: '8px', padding: '8px 12px', marginBottom: '8px', fontSize: '12px', color: 'var(--warning-text)' }}>
+              Your bio was flagged by <strong>{user.bio_flagged_by}</strong>: <em>{user.bio_flagged_reason}</em>. Please update it.
+            </div>
+          )}
+          <textarea
+            style={{ ...inputStyle, resize: 'vertical', minHeight: '72px', lineHeight: 1.5 }}
+            value={form.bio}
+            onChange={e => setForm({ ...form, bio: e.target.value.slice(0, 200) })}
+            placeholder="Tell your classmates a bit about yourself…"
+            rows={3}
+          />
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', display: 'block', textAlign: 'right' }}>{form.bio.length}/200</span>
+        </div>
 
         {/* Phone number — optional, with visibility control */}
         <div style={fieldGroupStyle}>
@@ -431,7 +466,7 @@ function StorageSection() {
                     {f.filename}
                   </div>
                   <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
-                    {sizeLabel(f.size)} · {f.created_at ? new Date(f.created_at).toLocaleDateString() : ''}
+                    {sizeLabel(f.size)} · {f.created_at ? formatDate(f.created_at) : ''}
                   </div>
                 </div>
                 <button
@@ -583,7 +618,7 @@ function PersonalDocumentsSection() {
                   </div>
                   <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
                     {doc.filename !== doc.label && <span>{doc.filename} · </span>}
-                    {sizeLabel(doc.size)} · {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : ''}
+                    {sizeLabel(doc.size)} · {doc.created_at ? formatDate(doc.created_at) : ''}
                   </div>
                 </div>
                 <a
@@ -604,6 +639,67 @@ function PersonalDocumentsSection() {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function PrivacySection({ user, onProfileUpdate }) {
+  const [showOnline, setShowOnline] = useState(user.show_online_status !== false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const handleToggle = async (val) => {
+    setShowOnline(val);
+    setSaving(true);
+    setMsg('');
+    try {
+      const res = await settingsAPI.updatePrivacy({ show_online_status: val });
+      onProfileUpdate(res.data.user, null);
+      setMsg('Privacy settings saved.');
+    } catch {
+      setShowOnline(!val);
+      setMsg('Failed to save.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div>
+      <h2 style={headingStyle}>Privacy</h2>
+      <div style={cardStyle}>
+        <h3 style={cardHeadingStyle}>Online Status</h3>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '20px' }}>
+          Control whether other members can see when you're active in a classroom chat.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)' }}>Show online status</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+              {showOnline ? 'Others can see your green dot when you\'re in chat' : 'You appear offline to everyone'}
+            </div>
+          </div>
+          <button
+            onClick={() => !saving && handleToggle(!showOnline)}
+            disabled={saving}
+            style={{
+              width: '44px', height: '24px', borderRadius: '999px', border: 'none',
+              background: showOnline ? '#667eea' : 'var(--border-color)',
+              cursor: saving ? 'not-allowed' : 'pointer',
+              position: 'relative', transition: 'background 0.2s', flexShrink: 0,
+            }}
+          >
+            <span style={{
+              position: 'absolute', top: '3px',
+              left: showOnline ? '23px' : '3px',
+              width: '18px', height: '18px', borderRadius: '50%',
+              background: 'white', transition: 'left 0.2s',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+            }} />
+          </button>
+        </div>
+        {msg && <p style={{ fontSize: '12px', color: msg.includes('Failed') ? '#ef4444' : '#22c55e', marginTop: '12px' }}>{msg}</p>}
       </div>
     </div>
   );
@@ -699,6 +795,126 @@ function ConnectedServicesSection() {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Login Activity section ───────────────────────────────────────────────────
+
+function LoginActivitySection() {
+  const [activity, setActivity] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    settingsAPI.getLoginActivity()
+      .then(res => setActivity(res.data.activity || []))
+      .catch(() => setErr('Failed to load login activity.'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const formatDate = (iso) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  };
+
+  const statusMeta = {
+    success: { label: 'Success', bg: '#f0fdf4', border: '#bbf7d0', color: '#15803d', dot: '#22c55e' },
+    failed:  { label: 'Failed',  bg: '#fef2f2', border: '#fecaca', color: '#dc2626', dot: '#ef4444' },
+  };
+
+  return (
+    <div>
+      <h2 style={headingStyle}>Login Activity</h2>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '20px' }}>
+        Last 10 login attempts to your account — including device, IP address, and whether they succeeded.
+        If you see a login you don't recognise, change your password immediately.
+      </p>
+
+      {loading && <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Loading…</p>}
+      {err && <p style={{ color: '#ef4444', fontSize: '13px' }}>{err}</p>}
+
+      {!loading && !err && (
+        <div style={{ border: '1px solid var(--border-color)', borderRadius: '12px', overflow: 'hidden' }}>
+          {/* Table header */}
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1fr 1fr 140px 90px',
+            padding: '10px 16px', background: 'var(--bg-color)',
+            borderBottom: '1px solid var(--border-color)',
+            fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)',
+            textTransform: 'uppercase', letterSpacing: '0.04em',
+          }}>
+            <span>Device</span>
+            <span>Date &amp; Time</span>
+            <span>IP Address</span>
+            <span>Status</span>
+          </div>
+
+          {activity.length === 0 ? (
+            <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+              No login records yet. They will appear here after your next login.
+            </div>
+          ) : activity.map((entry, idx) => {
+            const meta = statusMeta[entry.status] || statusMeta.success;
+            const isFirst = idx === 0;
+            return (
+              <div
+                key={idx}
+                style={{
+                  display: 'grid', gridTemplateColumns: '1fr 1fr 140px 90px',
+                  padding: '12px 16px', alignItems: 'center',
+                  borderBottom: idx < activity.length - 1 ? '1px solid var(--border-color)' : 'none',
+                  background: isFirst && entry.status === 'success' ? 'rgba(102,126,234,0.04)' : 'transparent',
+                  transition: 'background 0.15s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-color)'}
+                onMouseLeave={e => e.currentTarget.style.background = isFirst && entry.status === 'success' ? 'rgba(102,126,234,0.04)' : 'transparent'}
+              >
+                {/* Device */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: meta.dot, flexShrink: 0 }} />
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {entry.device || 'Unknown device'}
+                  </span>
+                  {isFirst && (
+                    <span style={{ fontSize: '10px', background: '#667eea', color: 'white', borderRadius: '4px', padding: '1px 6px', fontWeight: 600, flexShrink: 0 }}>
+                      Latest
+                    </span>
+                  )}
+                </div>
+
+                {/* Date */}
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  {formatDate(entry.logged_in_at)}
+                </span>
+
+                {/* IP */}
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                  {entry.ip || '—'}
+                </span>
+
+                {/* Status badge */}
+                <span style={{
+                  fontSize: '12px', fontWeight: 600,
+                  color: meta.color, background: meta.bg,
+                  border: `1px solid ${meta.border}`,
+                  borderRadius: '6px', padding: '3px 8px',
+                  display: 'inline-block', textAlign: 'center',
+                }}>
+                  {meta.label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!loading && !err && activity.length > 0 && (
+        <p style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+          Showing last {activity.length} login event{activity.length !== 1 ? 's' : ''}. Only logins to your account are tracked.
+        </p>
       )}
     </div>
   );
@@ -800,7 +1016,9 @@ function Settings({ user, onLogout, onProfileUpdate }) {
           <ProfileSection user={localUser} onProfileUpdate={handleProfileUpdate} />
         )}
         {activeSection === 'Security' && <SecuritySection />}
+        {activeSection === 'Login Activity' && <LoginActivitySection />}
         {activeSection === 'Appearance' && <AppearanceSection />}
+        {activeSection === 'Privacy' && <PrivacySection user={localUser} onProfileUpdate={handleProfileUpdate} />}
         {activeSection === 'Personal Documents' && <PersonalDocumentsSection />}
         {activeSection === 'Connected Services' && <ConnectedServicesSection />}
       </main>

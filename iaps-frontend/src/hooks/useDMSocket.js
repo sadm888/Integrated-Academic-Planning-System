@@ -38,6 +38,9 @@ export function useDMSocket(classroomId, withUserId, handlers = {}) {
     socket.on('dm_message_deleted',    (data) => handlersRef.current.onDeleted?.(data));
     socket.on('dm_message_tombstoned', (data) => handlersRef.current.onTombstoned?.(data));
     socket.on('dm_read',               (data) => handlersRef.current.onRead?.(data));
+    socket.on('dm_typing',             (data) => handlersRef.current.onTyping?.(data));
+    socket.on('dm_reaction_updated',   (data) => handlersRef.current.onReactionUpdated?.(data));
+    socket.on('dm_pin_updated',        (data) => handlersRef.current.onPinUpdated?.(data));
 
     return () => {
       socket.disconnect();

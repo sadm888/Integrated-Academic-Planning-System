@@ -1,15 +1,18 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { classroomAPI, semesterAPI, settingsAPI, dmAPI, BACKEND_URL } from '../services/api';
+import { classroomAPI, semesterAPI, settingsAPI, dmAPI, chatAPI, BACKEND_URL } from '../services/api';
 import FilePickerModal from '../components/FilePickerModal';
 import { useDMSocket } from '../hooks/useDMSocket';
 import { io } from 'socket.io-client';
 import Avatar from '../components/Avatar';
 import '../styles/Classroom.css';
-import { Bell, MessageSquare, EyeOff, Check, Eye, Trash2, Paperclip, X, Clock, CheckCircle, XCircle, Mail, Phone, UserX, Users, Crown, Shield } from 'lucide-react';
+import { Bell, MessageSquare, EyeOff, Check, Eye, Trash2, Paperclip, X, Clock, CheckCircle, XCircle, Mail, Phone, UserX, Users, Crown, Shield, Flag, CameraOff, Smile, Pin, PinOff } from 'lucide-react';
 import RemovedNotification from '../components/RemovedNotification';
 import { FileTypeIcon, sizeLabel } from '../utils/fileUtils';
-import { formatTime } from '../utils/timeUtils';
+import { formatTime, formatDate } from '../utils/timeUtils';
+import { toggleReactionOptimistic } from '../utils/reactionUtils';
+import EmojiMartPicker from '@emoji-mart/react';
+import emojiData from '@emoji-mart/data';
 
 function ClassroomDetail({ user, onDmRead }) {
   const { classroomId } = useParams();
@@ -39,6 +42,10 @@ function ClassroomDetail({ user, onDmRead }) {
   const [dmSending, setDmSending] = useState(false);
   const [dmUploading, setDmUploading] = useState(false);
   const [pendingDmFile, setPendingDmFile] = useState(null);
+  const [dmTyping, setDmTyping]           = useState(false); // other person is typing
+  const dmTypingTimerRef                  = useRef(null);
+  const dmLastTypingEmitRef               = useRef(0);
+  const dmSocketRef                       = useRef(null);
   const [memberDmStats, setMemberDmStats] = useState({}); // { user_id: count }
   const [unreadBySender, setUnreadBySender] = useState({}); // { user_id: unread_count }
   const [activity, setActivity] = useState({ announcements: [], unread_chat: {}, pending_requests: null });
@@ -48,6 +55,11 @@ function ClassroomDetail({ user, onDmRead }) {
   const [removeMemberReason, setRemoveMemberReason] = useState('');
   const [removeMemberLoading, setRemoveMemberLoading] = useState(false);
   const [removedNotification, setRemovedNotification] = useState(null); // { classroom_name, removed_by, reason }
+  const [flagBioTarget, setFlagBioTarget] = useState(null); // { id, name }
+  const [flagBioReason, setFlagBioReason] = useState('');
+  const [flagBioLoading, setFlagBioLoading] = useState(false);
+  const [onlineUsers, setOnlineUsers] = useState(new Set());
+  const [onlineLoaded, setOnlineLoaded] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [leaveError, setLeaveError] = useState('');
   const [leaveLoading, setLeaveLoading] = useState(false);
@@ -128,13 +140,20 @@ function ClassroomDetail({ user, onDmRead }) {
   }, [classroomId]);
 
   // DM socket — connects only when a DM thread is open
-  const { connected: dmConnected } = useDMSocket(
+  const { socketRef: _dmSocketRef, connected: dmConnected } = useDMSocket(
     dmTarget ? classroomId : null,
     dmTarget?.id || null,
     {
       onMessage: useCallback((msg) => {
         setDmMessages(prev => {
           if (prev.some(m => m.id === msg.id)) return prev;
+          // Replace optimistic placeholder from same sender if present
+          const pendingIdx = prev.findIndex(m => m.pending && m.sender_id === msg.sender_id);
+          if (pendingIdx !== -1) {
+            const next = [...prev];
+            next[pendingIdx] = msg;
+            return next;
+          }
           return [...prev, msg];
         });
         setTimeout(() => dmBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
@@ -153,8 +172,21 @@ function ClassroomDetail({ user, onDmRead }) {
           read_by: m.read_by?.includes(reader_id) ? m.read_by : [...(m.read_by || []), reader_id],
         })));
       }, []),
+      onTyping: useCallback(() => {
+        setDmTyping(true);
+        if (dmTypingTimerRef.current) clearTimeout(dmTypingTimerRef.current);
+        dmTypingTimerRef.current = setTimeout(() => setDmTyping(false), 3000);
+      }, []),
+      onReactionUpdated: useCallback(({ id, reactions }) => {
+        setDmMessages(prev => prev.map(m => m.id === id ? { ...m, reactions } : m));
+      }, []),
+      onPinUpdated: useCallback((msg) => {
+        setDmMessages(prev => prev.map(m => m.id === msg.id ? { ...m, pinned: msg.pinned } : m));
+      }, []),
     }
   );
+  // Keep a stable ref to the DM socket so the textarea onChange can emit dm_typing
+  useEffect(() => { dmSocketRef.current = _dmSocketRef.current; });
 
   // Load DM thread when dmTarget changes
   useEffect(() => {
@@ -193,6 +225,15 @@ function ClassroomDetail({ user, onDmRead }) {
       ]);
       const c = res.data.classroom;
       setClassroom(c);
+      // Load online status for all members
+      if (c?.members?.length) {
+        const memberIds = c.members.map(m => m.id || m._id).filter(Boolean);
+        chatAPI.getOnlineStatus(memberIds)
+          .then(r => { setOnlineUsers(new Set(r.data.online_user_ids || [])); setOnlineLoaded(true); })
+          .catch(() => setOnlineLoaded(true));
+      } else {
+        setOnlineLoaded(true);
+      }
       // Load per-member DM send counts for CRs
       if (c?.is_cr) {
         dmAPI.getMemberStats(classroomId)
@@ -214,15 +255,16 @@ function ClassroomDetail({ user, onDmRead }) {
     }
   };
 
-  const sendDmMessage = async () => {
+  const sendDmMessage = async (replyingTo = null) => {
     if (dmSending || dmUploading || !dmTarget) return;
+    const replyPayload = replyingTo ? { reply_to_id: replyingTo.id } : {};
     if (pendingDmFile) {
       const caption = dmText.trim();
       const file = pendingDmFile;
       setPendingDmFile(null); setDmText('');
       setDmUploading(true); setDmError('');
       try {
-        await dmAPI.uploadFile(classroomId, dmTarget.id, file, caption || undefined);
+        await dmAPI.uploadFile(classroomId, dmTarget.id, file, caption || undefined, replyPayload);
       } catch (err) {
         setDmError(err.response?.data?.error || 'Failed to send file');
       } finally { setDmUploading(false); }
@@ -230,18 +272,42 @@ function ClassroomDetail({ user, onDmRead }) {
     }
     const text = dmText.trim();
     if (!text) return;
-    setDmSending(true); setDmError('');
+    // Optimistic message
+    const optimisticId = `pending-${Date.now()}`;
+    const optimisticMsg = {
+      id: optimisticId, pending: true,
+      sender_id: user?.id, sender_name: user?.fullName || user?.username,
+      text, created_at: new Date().toISOString(),
+      read_by: [], reactions: [],
+      ...(replyingTo ? { reply_to: { id: replyingTo.id, text: replyingTo.text, sender_name: replyingTo.senderName } } : {}),
+    };
+    setDmMessages(prev => [...prev, optimisticMsg]);
+    setTimeout(() => dmBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    setDmSending(true); setDmError(''); setDmText('');
     try {
-      const res = await dmAPI.sendMessage(classroomId, dmTarget.id, text);
-      setDmText('');
-      // Message comes back via socket; add optimistically if socket not yet connected
-      if (!dmConnected) {
-        setDmMessages(prev => [...prev, res.data.message]);
-        setTimeout(() => dmBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
-      }
+      await dmAPI.sendMessage(classroomId, dmTarget.id, text, replyPayload);
+      // Socket handler replaces the optimistic message; remove it here only if socket was slow
+      setTimeout(() => {
+        setDmMessages(prev => prev.filter(m => m.id !== optimisticId));
+      }, 3000);
     } catch (err) {
       setDmError(err.response?.data?.error || 'Failed to send');
+      setDmMessages(prev => prev.filter(m => m.id !== optimisticId));
     } finally { setDmSending(false); }
+  };
+
+  const handleDmReact = async (msgId, emoji) => {
+    setDmMessages(prev => prev.map(m =>
+      m.id === msgId ? toggleReactionOptimistic(m, emoji, user?.id) : m
+    ));
+    try {
+      await dmAPI.reactToDm(classroomId, msgId, emoji);
+    } catch (err) {
+      setDmError(err.response?.data?.error || 'Failed to react');
+      dmAPI.getThread(classroomId, dmTarget.id)
+        .then(res => setDmMessages(res.data.messages || []))
+        .catch(() => {});
+    }
   };
 
   const deleteDmMessage = async (messageId, mode = 'for_everyone') => {
@@ -252,6 +318,18 @@ function ClassroomDetail({ user, onDmRead }) {
       }
     } catch (err) {
       setDmError(err.response?.data?.error || 'Failed to delete');
+    }
+  };
+
+  const handleDmPin = async (msgId) => {
+    // Optimistic toggle
+    setDmMessages(prev => prev.map(m => m.id === msgId ? { ...m, pinned: !m.pinned } : m));
+    try {
+      await dmAPI.pinDm(classroomId, msgId);
+    } catch (err) {
+      // Revert on failure
+      setDmMessages(prev => prev.map(m => m.id === msgId ? { ...m, pinned: !m.pinned } : m));
+      setDmError(err.response?.data?.error || 'Failed to pin message');
     }
   };
 
@@ -309,7 +387,7 @@ function ClassroomDetail({ user, onDmRead }) {
       setSuccess(`Profile photo removed for ${removePhotoTarget.name}.`);
       setRemovePhotoTarget(null);
       setRemovePhotoReason('');
-      loadClassroomData();
+      await loadClassroomData();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to remove photo');
     } finally {
@@ -331,6 +409,24 @@ function ClassroomDetail({ user, onDmRead }) {
       setError(err.response?.data?.error || 'Failed to flag display name');
     } finally {
       setFlagNameLoading(false);
+    }
+  };
+
+  const handleFlagBio = async (e) => {
+    e.preventDefault();
+    if (!flagBioTarget || !flagBioReason.trim()) return;
+    setFlagBioLoading(true);
+    setError('');
+    try {
+      await classroomAPI.flagMemberBio(classroomId, flagBioTarget.id, flagBioReason.trim());
+      setSuccess(`Bio flagged for ${flagBioTarget.name}. They will be prompted to update it.`);
+      await loadClassroomData();
+      setFlagBioTarget(null);
+      setFlagBioReason('');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to flag bio');
+    } finally {
+      setFlagBioLoading(false);
     }
   };
 
@@ -665,7 +761,7 @@ function ClassroomDetail({ user, onDmRead }) {
                   <div key={a.id} style={{ padding: '8px 10px', background: 'var(--bg-color)', borderRadius: '8px', marginBottom: '4px', borderLeft: '3px solid #667eea' }}>
                     <div style={{ fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.4 }}>{a.text}</div>
                     <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '3px' }}>
-                      {a.created_by_name} · {a.semester_name} · {new Date(a.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      {a.created_by_name} · {a.semester_name} · {formatDate(a.created_at)}
                     </div>
                   </div>
                 ))}
@@ -731,7 +827,6 @@ function ClassroomDetail({ user, onDmRead }) {
               const isSelf = member.id === user?.id;
               // Show DM button: member→CRs only, CR→anyone (not self)
               const canDm = !isSelf && (classroom.is_cr || isMemberCr);
-              const memberMsgCount = memberDmStats[member.id] || 0;
               const unreadFromMember = unreadBySender[member.id] || 0;
               return (
                 <div key={member.id} className="classroom-card" style={{ cursor: 'default' }}>
@@ -753,7 +848,12 @@ function ClassroomDetail({ user, onDmRead }) {
                         }}
                         title={member.profile_picture ? 'View full photo' : ''}
                       >
-                        <Avatar user={member} size={40} />
+                        <Avatar
+                          user={member}
+                          size={40}
+                          showOnline={onlineLoaded ? (member.id === user?.id ? true : onlineUsers.has(member.id)) : null}
+                          dotColor={member.id === user?.id && user?.show_online_status === false ? '#667eea' : undefined}
+                        />
                       </div>
                       {unreadFromMember > 0 && (
                         <span style={{
@@ -786,6 +886,17 @@ function ClassroomDetail({ user, onDmRead }) {
                       {member.fullName && <p style={{ color: '#888', fontSize: '12px', margin: '1px 0 0' }}>@{member.username}</p>}
                     </div>
                   </div>
+                  {/* Bio */}
+                  {member.bio && !member.bio_flagged_reason && (
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 2px', fontStyle: 'italic', lineHeight: 1.45 }}>
+                      "{member.bio}"
+                    </p>
+                  )}
+                  {member.bio_flagged_reason && member.id === user?.id && (
+                    <p style={{ fontSize: '11px', color: 'var(--warning-text)', margin: '4px 0 2px', background: 'var(--warning-bg)', borderRadius: '6px', padding: '4px 8px' }}>
+                      Your bio was flagged — please update it in Settings.
+                    </p>
+                  )}
                   <p className="classroom-description" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                     <Mail size={12} style={{ flexShrink: 0, color: 'var(--text-secondary)' }} />
                     {member.email}
@@ -799,47 +910,57 @@ function ClassroomDetail({ user, onDmRead }) {
                       )}
                     </p>
                   )}
-                  {/* DM button + outbound message count (CR view) */}
-                  <div className="classroom-footer" style={{ gap: '8px', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                      {canDm && (
-                        <button
-                          onClick={() => setDmTarget({ id: member.id, name: member.fullName || member.username })}
-                          style={{
-                            background: 'rgba(59,130,246,0.1)', color: '#3b82f6',
-                            border: '1px solid rgba(59,130,246,0.3)',
-                            borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
-                            display: 'inline-flex', alignItems: 'center', gap: '5px',
-                          }}
-                        >
-                          <MessageSquare size={12} strokeWidth={2} />Message
+                  {/* Member actions */}
+                  <div className="classroom-footer" style={{ flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
+                    {/* Row 1: Chat */}
+                    {canDm && (
+                      <button
+                        onClick={() => setDmTarget({ id: member.id, name: member.fullName || member.username })}
+                        style={{
+                          background: 'rgba(59,130,246,0.1)', color: '#3b82f6',
+                          border: '1px solid rgba(59,130,246,0.3)',
+                          borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
+                          display: 'inline-flex', alignItems: 'center', gap: '5px',
+                        }}
+                      >
+                        <MessageSquare size={12} strokeWidth={2} />Message
+                      </button>
+                    )}
+                    {/* Row 2: CR actions */}
+                    {canKick && (
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <button onClick={() => handleRemoveMember(member.id, member.fullName || member.username)} style={{
+                          background: 'rgba(220,38,38,0.08)', color: '#dc2626',
+                          border: '1px solid rgba(220,38,38,0.25)',
+                          borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
+                          display: 'inline-flex', alignItems: 'center', gap: '5px',
+                        }}>
+                          <UserX size={12} strokeWidth={2} />Remove
                         </button>
-                      )}
-                      {canKick && (
-                        <>
-                          <button onClick={() => handleRemoveMember(member.id, member.fullName || member.username)} style={{
+                        {member.profile_picture && (
+                          <button onClick={() => { setRemovePhotoTarget({ id: member.id, name: member.fullName || member.username }); setRemovePhotoReason(''); }} style={{
                             background: 'rgba(220,38,38,0.08)', color: '#dc2626',
                             border: '1px solid rgba(220,38,38,0.25)',
                             borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
                             display: 'inline-flex', alignItems: 'center', gap: '5px',
-                          }}>
-                            <UserX size={12} strokeWidth={2} />Remove
-                          </button>
-                          {member.profile_picture && (
-                            <button onClick={() => { setRemovePhotoTarget({ id: member.id, name: member.fullName || member.username }); setRemovePhotoReason(''); }} style={{
-                              background: 'rgba(220,38,38,0.08)', color: '#dc2626',
-                              border: '1px solid rgba(220,38,38,0.25)',
-                              borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
-                            }}>Remove Photo</button>
-                          )}
-                          <button onClick={() => { setFlagNameTarget({ id: member.id, name: member.fullName || member.username }); setFlagNameReason(''); }} style={{
+                          }}><CameraOff size={12} strokeWidth={2} />Remove Photo</button>
+                        )}
+                        <button onClick={() => { setFlagNameTarget({ id: member.id, name: member.fullName || member.username }); setFlagNameReason(''); }} style={{
+                          background: 'rgba(22,163,74,0.08)', color: '#16a34a',
+                          border: '1px solid rgba(22,163,74,0.25)',
+                          borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
+                          display: 'inline-flex', alignItems: 'center', gap: '5px',
+                        }}><Flag size={12} strokeWidth={2} />Flag Name</button>
+                        {member.bio && (
+                          <button onClick={() => { setFlagBioTarget({ id: member.id, name: member.fullName || member.username }); setFlagBioReason(''); }} style={{
                             background: 'rgba(22,163,74,0.08)', color: '#16a34a',
                             border: '1px solid rgba(22,163,74,0.25)',
                             borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer', fontWeight: 600,
-                          }}>Flag Name</button>
-                        </>
-                      )}
-                    </div>
+                            display: 'inline-flex', alignItems: 'center', gap: '5px',
+                          }}><Flag size={12} strokeWidth={2} />Flag Bio</button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -951,6 +1072,38 @@ function ClassroomDetail({ user, onDmRead }) {
         </div>
       )}
 
+
+      {/* Flag Bio Modal */}
+      {flagBioTarget && (
+        <div className="modal-overlay" onClick={() => setFlagBioTarget(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '420px' }}>
+            <h2>Flag Inappropriate Bio</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '6px' }}>
+              Flagging <strong>{flagBioTarget.name}</strong>'s bio as inappropriate.
+              Their bio will be hidden from other members.
+            </p>
+            <form onSubmit={handleFlagBio}>
+              <div className="form-group">
+                <label>Reason *</label>
+                <textarea
+                  value={flagBioReason}
+                  onChange={(e) => setFlagBioReason(e.target.value)}
+                  placeholder="e.g., Contains offensive or inappropriate content"
+                  rows="3"
+                  required
+                  disabled={flagBioLoading}
+                />
+              </div>
+              <div className="modal-buttons">
+                <button type="button" onClick={() => setFlagBioTarget(null)} disabled={flagBioLoading}>Cancel</button>
+                <button type="submit" disabled={flagBioLoading || !flagBioReason.trim()} style={{ background: 'var(--success-color)', color: 'white' }}>
+                  {flagBioLoading ? 'Flagging...' : 'Flag Bio'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Add Co-CR Modal */}
       {showAddCrModal && activeSemester && (
@@ -1147,18 +1300,31 @@ function ClassroomDetail({ user, onDmRead }) {
           loading={dmLoading}
           error={dmError}
           text={dmText}
-          onTextChange={setDmText}
+          onTextChange={(val) => {
+            setDmText(val);
+            // Throttled dm_typing emit
+            const now = Date.now();
+            if (dmSocketRef.current && now - dmLastTypingEmitRef.current > 2000) {
+              dmLastTypingEmitRef.current = now;
+              dmSocketRef.current.emit('dm_typing', { classroom_id: classroomId, with_user_id: dmTarget.id });
+            }
+          }}
           pendingFile={pendingDmFile}
           onFilePick={() => dmFileInputRef.current?.click()}
           onClearFile={() => setPendingDmFile(null)}
           onSend={sendDmMessage}
           onDelete={(msgId, mode) => deleteDmMessage(msgId, mode)}
+          onReact={handleDmReact}
+          onPin={handleDmPin}
           sending={dmSending}
           uploading={dmUploading}
           bottomRef={dmBottomRef}
           userId={user?.id}
           onClose={() => { setDmTarget(null); setDmText(''); setPendingDmFile(null); setDmError(''); }}
           onOpenFilePicker={() => setShowDmFilePicker(true)}
+          isOnline={onlineUsers.has(dmTarget?.id)}
+          isTyping={dmTyping}
+          classroomId={classroomId}
         />
       )}
       {showDmFilePicker && (
@@ -1253,13 +1419,13 @@ function ClassroomDetail({ user, onDmRead }) {
                 userSelect: 'none', WebkitUserSelect: 'none', pointerEvents: 'none',
               }}
             />
-            {/* Watermark — only shown when screenshot key detected */}
-            {photoWatermark && (
+            {/* Watermark — shown when screenshot key detected */}
+            {photoWatermark && fullscreenPhoto.url && (
               <div style={{
                 position: 'absolute', inset: 0, borderRadius: '12px', overflow: 'hidden',
                 pointerEvents: 'none',
                 backgroundImage: `url("data:image/svg+xml,${encodeURIComponent(
-                  `<svg xmlns='http://www.w3.org/2000/svg' width='280' height='110'><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='14' fill='rgba(255,255,255,0.45)' transform='rotate(-25 140 55)'>${user?.username || ''} • ${new Date().toLocaleString()}</text></svg>`
+                  `<svg xmlns='http://www.w3.org/2000/svg' width='280' height='110'><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='sans-serif' font-size='14' fill='rgba(255,255,255,0.18)' transform='rotate(-25 140 55)'>${user?.username || ''} • ${new Date().toLocaleString()}</text></svg>`
                 )}")`,
                 backgroundRepeat: 'repeat',
               }} />
@@ -1297,8 +1463,57 @@ function ClassroomDetail({ user, onDmRead }) {
 }
 
 
-function DMModal({ target, messages, loading, error, text, onTextChange, pendingFile, onFilePick, onClearFile, onSend, onDelete, sending, uploading, bottomRef, userId, onClose, onOpenFilePicker }) {
+function DMModal({ target, messages, loading, error, text, onTextChange, pendingFile, onFilePick, onClearFile, onSend, onDelete, onReact, onPin, sending, uploading, bottomRef, userId, onClose, onOpenFilePicker, isOnline, isTyping }) {
   const [dmDeleteMenu, setDmDeleteMenu] = React.useState(null); // { msgId, x, y }
+  const [reactionPickerState, setReactionPickerState] = React.useState(null); // { msgId, x, y }
+  const [showInputEmoji, setShowInputEmoji] = React.useState(false);
+  const smileBtnRef = React.useRef(null);
+  const [reactionDetailsMsg, setReactionDetailsMsg] = React.useState(null);
+  const [hoveredMsgId, setHoveredMsgId] = React.useState(null);
+  const [reactionTooltip, setReactionTooltip] = React.useState(null);
+  const textareaRef = React.useRef(null);
+  const [replyingTo, setReplyingTo] = React.useState(null); // { id, text, senderName }
+  const [reactionDetailsTab, setReactionDetailsTab] = React.useState('all');
+  const [atBottom, setAtBottom] = React.useState(true);
+  const [newMsgCount, setNewMsgCount] = React.useState(0);
+  const scrollRef = React.useRef(null);
+  const prevMsgCountRef = React.useRef(messages.length);
+
+  // Track scroll position to show/hide scroll-to-bottom button
+  const handleScroll = React.useCallback((e) => {
+    const el = e.currentTarget;
+    const threshold = 80;
+    const isBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    setAtBottom(isBottom);
+    if (isBottom) setNewMsgCount(0);
+  }, []);
+
+  // Track new messages when not at bottom
+  React.useEffect(() => {
+    if (messages.length > prevMsgCountRef.current) {
+      const lastNew = messages[messages.length - 1];
+      if (!atBottom && lastNew?.sender_id !== userId) {
+        setNewMsgCount(c => c + (messages.length - prevMsgCountRef.current));
+      }
+    }
+    prevMsgCountRef.current = messages.length;
+  }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync reactionDetailsMsg live when messages change
+  React.useEffect(() => {
+    if (!reactionDetailsMsg) return;
+    const updated = messages.find(m => m.id === reactionDetailsMsg.id);
+    if (updated) setReactionDetailsMsg(updated);
+  }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  React.useEffect(() => {
+    if (!reactionPickerState) return;
+    const handler = (e) => {
+      if (!e.target.closest('.dm-reaction-picker')) setReactionPickerState(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [reactionPickerState]);
 
   React.useEffect(() => {
     if (!dmDeleteMenu) return;
@@ -1307,12 +1522,30 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
     return () => document.removeEventListener('mousedown', handler);
   }, [dmDeleteMenu]);
 
+  React.useEffect(() => {
+    if (!showInputEmoji) return;
+    const handler = (e) => {
+      // Don't close when clicking the smile button itself — its click handler toggles
+      if (smileBtnRef.current?.contains(e.target)) return;
+      if (!e.target.closest('.dm-emoji-input-picker')) setShowInputEmoji(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showInputEmoji]);
+
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); }
+    if (e.key === 'Escape' && replyingTo) { e.preventDefault(); setReplyingTo(null); return; }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(replyingTo); setReplyingTo(null); }
   };
 
-  // Find the last message sent by me to show read receipt
   const lastMyMsgIdx = messages.reduce((last, m, i) => m.sender_id === userId ? i : last, -1);
+
+  // Resolve display name from user ID (1:1 DM)
+  const resolveName = (uid) => {
+    if (uid === userId) return 'You';
+    if (uid === target.id) return target.name;
+    return 'Unknown';
+  };
 
   return (
     <div
@@ -1327,7 +1560,7 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
         style={{
           width: '100%', maxWidth: '520px', height: '560px',
           background: 'var(--card-bg)', borderRadius: '16px',
-          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          display: 'flex', flexDirection: 'column',
           boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
         }}
         onClick={e => e.stopPropagation()}
@@ -1341,7 +1574,10 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
             <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text-primary)' }}>
               {target.name}
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Private Message</div>
+            <div style={{ fontSize: '12px', color: isOnline ? '#22c55e' : 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              {isOnline && <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', display: 'inline-block' }} />}
+              {isOnline ? 'Online' : 'Private Message'}
+            </div>
           </div>
           <button onClick={onClose} style={{
             background: 'none', border: 'none', cursor: 'pointer',
@@ -1349,8 +1585,60 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
           }}><X size={18} strokeWidth={2} /></button>
         </div>
 
+        {/* Pinned message banner */}
+        {messages.filter(m => m.pinned).length > 0 && (() => {
+          const pinned = messages.filter(m => m.pinned);
+          const latest = pinned[pinned.length - 1];
+          return (
+            <div style={{
+              padding: '6px 16px', borderBottom: '1px solid var(--border-color)',
+              background: 'rgba(102,126,234,0.06)', display: 'flex', alignItems: 'center',
+              gap: '8px', flexShrink: 0, cursor: 'default',
+            }}>
+              <Pin size={12} strokeWidth={2} style={{ color: '#667eea', flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ fontSize: '11px', fontWeight: 600, color: '#667eea' }}>Pinned </span>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: '280px', verticalAlign: 'bottom' }}>
+                  {latest.text || latest.file?.name || '[file]'}
+                </span>
+              </div>
+              {pinned.length > 1 && (
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', flexShrink: 0 }}>+{pinned.length - 1} more</span>
+              )}
+              <button
+                onClick={() => onPin(latest.id)}
+                title="Unpin"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', color: 'var(--text-secondary)', flexShrink: 0 }}
+                onMouseEnter={e => e.currentTarget.style.color = '#667eea'}
+                onMouseLeave={e => e.currentTarget.style.color = 'var(--text-secondary)'}
+              ><PinOff size={12} strokeWidth={2} /></button>
+            </div>
+          );
+        })()}
+
         {/* Messages */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {/* Scroll-to-bottom FAB — outside scroll container so it stays visible */}
+        {!atBottom && (
+          <div style={{ position: 'relative', flexShrink: 0, height: 0 }}>
+            <button
+              onClick={() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); setAtBottom(true); setNewMsgCount(0); }}
+              style={{
+                position: 'absolute', bottom: '-36px', left: '50%', transform: 'translateX(-50%)', zIndex: 5,
+                background: '#667eea', color: 'white', border: 'none', borderRadius: '20px',
+                padding: '5px 14px', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                boxShadow: '0 2px 8px rgba(102,126,234,0.4)',
+                display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap',
+              }}
+            >
+              {newMsgCount > 0 ? `${newMsgCount} new ↓` : '↓'}
+            </button>
+          </div>
+        )}
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '2px' }}
+        >
           {loading && <div style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '14px', marginTop: '40px' }}>Loading…</div>}
           {!loading && messages.length === 0 && (
             <div style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '14px', marginTop: '40px' }}>
@@ -1364,55 +1652,242 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
             const fileUrl = hasFile ? dmAPI.getDmFileUrl(msg.id) : null;
             const isRead = isMe && msg.read_by?.includes(target.id);
             const isLastMine = isMe && idx === lastMyMsgIdx;
+            const isPending = !!msg.pending;
+
+            // Date divider
+            const msgDate = msg.created_at ? new Date(msg.created_at) : null;
+            const prevMsgDate = idx > 0 && messages[idx - 1].created_at ? new Date(messages[idx - 1].created_at) : null;
+            const showDateDivider = msgDate && (!prevMsgDate || msgDate.toDateString() !== prevMsgDate.toDateString());
+
+            // Message grouping — hide avatar/name if same sender as previous (within 2min)
+            const prevMsg = idx > 0 ? messages[idx - 1] : null;
+            const isGrouped = prevMsg && prevMsg.sender_id === msg.sender_id &&
+              msgDate && prevMsgDate && (msgDate - prevMsgDate) < 120000;
+
             return (
-              <div key={msg.id} style={{ display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: '6px' }}>
+              <React.Fragment key={msg.id}>
+                {/* Date divider */}
+                {showDateDivider && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '10px 0 6px', opacity: 0.6 }}>
+                    <div style={{ flex: 1, height: '1px', background: 'var(--border-color)' }} />
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)', whiteSpace: 'nowrap', fontWeight: 600 }}>
+                      {msgDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                    </span>
+                    <div style={{ flex: 1, height: '1px', background: 'var(--border-color)' }} />
+                  </div>
+                )}
+              <div
+                style={{ display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: '6px', marginTop: isGrouped ? '2px' : '8px', opacity: isPending ? 0.6 : 1 }}
+                onMouseEnter={() => setHoveredMsgId(msg.id)}
+                onMouseLeave={() => setHoveredMsgId(null)}
+              >
                 {!isMe && (
-                  <Avatar user={{ username: msg.sender_name || '?' }} size={28} />
+                  isGrouped
+                    ? <div style={{ width: 28 }} />
+                    : <Avatar user={{ username: msg.sender_name || '?' }} size={28} />
                 )}
                 <div style={{ maxWidth: '72%' }}>
-                  {!isMe && (
+                  {!isMe && !isGrouped && (
                     <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '2px', paddingLeft: '4px' }}>
                       {msg.sender_name}
                     </div>
                   )}
-                  <div style={{
-                    background: isMe ? '#667eea' : 'var(--bg-color)',
-                    color: isMe ? 'white' : 'var(--text-primary)',
-                    borderRadius: isMe ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                    padding: '9px 13px', fontSize: '14px', wordBreak: 'break-word',
-                    border: isMe ? 'none' : '1px solid var(--border-color)',
-                    position: 'relative',
-                    opacity: isDeleted ? 0.7 : 1,
-                  }}>
-                    {isDeleted ? (
-                      <span style={{ color: isMe ? 'rgba(255,255,255,0.55)' : '#9ca3af', fontStyle: 'italic', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <EyeOff size={13} strokeWidth={1.75} /> This message was deleted
-                      </span>
-                    ) : (
-                      <>
-                        {hasFile && (
-                          <a href={fileUrl} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isMe ? 'rgba(255,255,255,0.9)' : '#667eea', textDecoration: 'none', marginBottom: msg.text ? '6px' : 0 }}>
-                            <FileTypeIcon mime={msg.file.mime_type} size={18} />
-                            <span style={{ fontSize: '13px', fontWeight: 500 }}>{msg.file.name}</span>
-                            <span style={{ fontSize: '11px', opacity: 0.75 }}>{sizeLabel(msg.file.size)}</span>
-                          </a>
+                  <div style={{ position: 'relative' }}>
+                    {/* Hover toolbar */}
+                    {!isDeleted && hoveredMsgId === msg.id && (
+                      <div
+                        onMouseEnter={() => setHoveredMsgId(msg.id)}
+                        style={{
+                          position: 'absolute',
+                          top: '50%', transform: 'translateY(-50%)',
+                          [isMe ? 'right' : 'left']: 'calc(100% + 4px)',
+                          display: 'flex', gap: '2px',
+                          background: 'var(--card-bg)', borderRadius: '6px', padding: '3px 6px',
+                          boxShadow: '0 2px 8px rgba(0,0,0,0.15)', border: '1px solid var(--border-color)',
+                          zIndex: 10, whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <button
+                          onClick={(e) => {
+                            if (reactionPickerState?.msgId === msg.id) { setReactionPickerState(null); return; }
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const pickerW = 352, pickerH = 420;
+                            const x = Math.max(8, Math.min(rect.left, window.innerWidth - pickerW - 8));
+                            const y = rect.top - pickerH - 8 < 8
+                              ? rect.bottom + 8
+                              : rect.top - pickerH - 8;
+                            setReactionPickerState({ msgId: msg.id, x, y });
+                          }}
+                          title="React"
+                          style={{ background: reactionPickerState?.msgId === msg.id ? 'var(--bg-color)' : 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', borderRadius: '4px', display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-color)'}
+                          onMouseLeave={e => { if (reactionPickerState?.msgId !== msg.id) e.currentTarget.style.background = 'none'; }}
+                        ><Smile size={13} strokeWidth={1.75} /></button>
+                        {/* Reply button */}
+                        {!isDeleted && (
+                          <button
+                            onClick={() => setReplyingTo({ id: msg.id, text: msg.text, senderName: isMe ? 'You' : (msg.sender_name || target.name) })}
+                            title="Reply"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', borderRadius: '4px', display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}
+                            onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-color)'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                          >↩</button>
                         )}
-                        {msg.text && <span>{msg.text}</span>}
+                        {/* Copy text — available for all non-deleted messages */}
+                        {!isDeleted && (msg.text || msg.file?.name) && (
+                          <button
+                            onClick={() => navigator.clipboard.writeText(msg.text || msg.file?.name || '')}
+                            title="Copy"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', borderRadius: '4px', display: 'flex', alignItems: 'center', color: 'var(--text-secondary)', fontSize: '11px', fontWeight: 700 }}
+                            onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-color)'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                          ><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+                        )}
+                        {/* Pin / Unpin — available for all non-deleted, non-pending messages */}
+                        {!isDeleted && !isPending && (
+                          <button
+                            onClick={() => onPin(msg.id)}
+                            title={msg.pinned ? 'Unpin' : 'Pin'}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', borderRadius: '4px', display: 'flex', alignItems: 'center', color: msg.pinned ? '#667eea' : 'var(--text-secondary)' }}
+                            onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-color)'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                          >{msg.pinned ? <PinOff size={13} strokeWidth={1.75} /> : <Pin size={13} strokeWidth={1.75} />}</button>
+                        )}
                         {isMe && (
                           <button
                             onClick={(e) => { e.stopPropagation(); setDmDeleteMenu({ msgId: msg.id, x: e.clientX, y: e.clientY }); }}
-                            onMouseDown={e => e.stopPropagation()}
-                            style={{
-                              background: 'none', border: 'none', cursor: 'pointer',
-                              color: 'rgba(255,255,255,0.5)', fontSize: '11px', padding: '0 0 0 8px',
-                              verticalAlign: 'middle',
-                            }}
-                            title="Delete options"
-                          >⋯</button>
+                            title="Delete"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 5px', borderRadius: '4px', display: 'flex', alignItems: 'center', color: '#9ca3af' }}
+                            onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                          ><Trash2 size={13} strokeWidth={1.75} /></button>
                         )}
-                      </>
+                      </div>
                     )}
+
+                    {/* Message bubble */}
+                    <div style={{
+                      background: isMe ? '#667eea' : 'var(--bg-color)',
+                      color: isMe ? 'white' : 'var(--text-primary)',
+                      borderRadius: isMe ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                      padding: '9px 13px', fontSize: '14px', wordBreak: 'break-word',
+                      border: isMe ? 'none' : '1px solid var(--border-color)',
+                      opacity: isDeleted ? 0.7 : 1,
+                    }}>
+                      {isDeleted ? (
+                        <span style={{ color: isMe ? 'rgba(255,255,255,0.55)' : '#9ca3af', fontStyle: 'italic', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <EyeOff size={13} strokeWidth={1.75} /> This message was deleted
+                        </span>
+                      ) : (
+                        <>
+                          {/* Reply quote block */}
+                          {msg.reply_to && (
+                            <div style={{
+                              borderLeft: `3px solid ${isMe ? 'rgba(255,255,255,0.5)' : '#667eea'}`,
+                              paddingLeft: '8px', marginBottom: '6px',
+                              opacity: 0.75, fontSize: '12px',
+                              color: isMe ? 'rgba(255,255,255,0.85)' : 'var(--text-secondary)',
+                            }}>
+                              <div style={{ fontWeight: 600, marginBottom: '1px' }}>{msg.reply_to.sender_name}</div>
+                              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+                                {msg.reply_to.text || '[file]'}
+                              </div>
+                            </div>
+                          )}
+                          {hasFile && (
+                            <a href={fileUrl} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '6px', color: isMe ? 'rgba(255,255,255,0.9)' : '#667eea', textDecoration: 'none', marginBottom: msg.text ? '6px' : 0 }}>
+                              <FileTypeIcon mime={msg.file.mime_type} size={18} />
+                              <span style={{ fontSize: '13px', fontWeight: 500 }}>{msg.file.name}</span>
+                              <span style={{ fontSize: '11px', opacity: 0.75 }}>{sizeLabel(msg.file.size)}</span>
+                            </a>
+                          )}
+                          {msg.text && <span>{msg.text}</span>}
+                        </>
+                      )}
+                    </div>
+
+                    {/* reaction picker rendered as fixed overlay — see bottom of component */}
                   </div>
+
+                  {/* Reactions bar — max 4 visible + overflow chip + tooltips */}
+                  {msg.reactions?.some(r => r.user_ids?.length > 0) && (() => {
+                    const activeReactions = msg.reactions.filter(r => r.user_ids?.length > 0);
+                    const MAX_VISIBLE = 4;
+                    const visible = activeReactions.slice(0, MAX_VISIBLE);
+                    const overflow = activeReactions.slice(MAX_VISIBLE);
+                    const overflowCount = overflow.reduce((s, r) => s + r.user_ids.length, 0);
+                    return (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '-4px', paddingBottom: '2px', justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+                        {visible.map(r => {
+                          const reacted = r.user_ids?.includes(userId);
+                          const isTooltipOpen = reactionTooltip?.msgId === msg.id && reactionTooltip?.emoji === r.emoji;
+                          const reactorNames = r.user_ids.map(uid => resolveName(uid));
+                          return (
+                            <div key={r.emoji} style={{ position: 'relative' }}>
+                              {isTooltipOpen && (
+                                <div style={{
+                                  position: 'absolute', bottom: 'calc(100% + 6px)',
+                                  [isMe ? 'right' : 'left']: 0,
+                                  background: 'rgba(30,30,30,0.93)', color: 'white',
+                                  borderRadius: '8px', padding: '6px 10px',
+                                  fontSize: '12px', whiteSpace: 'nowrap',
+                                  zIndex: 50, pointerEvents: 'none',
+                                  boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+                                }}>
+                                  <span style={{ fontSize: '15px', marginRight: '6px' }}>{r.emoji}</span>
+                                  {reactorNames.slice(0, 5).join(', ')}
+                                  {reactorNames.length > 5 && ` +${reactorNames.length - 5}`}
+                                </div>
+                              )}
+                              <button
+                                onClick={() => onReact(msg.id, r.emoji)}
+                                onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.1)'; setReactionTooltip({ msgId: msg.id, emoji: r.emoji }); }}
+                                onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; setReactionTooltip(null); }}
+                                style={{
+                                  background: reacted ? 'rgba(102,126,234,0.12)' : 'var(--card-bg)',
+                                  border: `1.5px solid ${reacted ? 'var(--primary-color)' : 'var(--border-color)'}`,
+                                  borderRadius: '12px', padding: '2px 7px',
+                                  cursor: 'pointer', fontSize: '13px',
+                                  display: 'inline-flex', alignItems: 'center', gap: '3px',
+                                  boxShadow: '0 1px 4px rgba(0,0,0,0.10)',
+                                  color: 'var(--text-primary)',
+                                  transition: 'transform 0.1s',
+                                }}
+                              >
+                                {r.emoji}
+                                <span style={{ fontSize: '11px', fontWeight: 700, color: reacted ? 'var(--primary-color)' : 'var(--text-secondary)' }}>
+                                  {r.user_ids.length}
+                                </span>
+                              </button>
+                            </div>
+                          );
+                        })}
+                        {overflow.length > 0 && (
+                          <button
+                            onClick={() => setReactionDetailsMsg(msg)}
+                            style={{
+                              background: 'var(--card-bg)', border: '1.5px solid var(--border-color)',
+                              borderRadius: '12px', padding: '2px 7px', cursor: 'pointer',
+                              fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '2px',
+                              color: 'var(--text-secondary)',
+                            }}
+                          >
+                            {overflow.slice(0, 2).map(r => r.emoji).join('')}
+                            <span style={{ fontWeight: 700 }}>+{overflowCount}</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setReactionDetailsMsg(msg)}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            fontSize: '12px', color: 'var(--text-secondary)', padding: '2px 4px',
+                          }}
+                          title="See all reactions"
+                        >···</button>
+                      </div>
+                    );
+                  })()}
+
                   <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px', paddingLeft: '4px', textAlign: isMe ? 'right' : 'left', display: 'flex', justifyContent: isMe ? 'flex-end' : 'flex-start', alignItems: 'center', gap: '4px' }}>
                     <span>{formatTime(msg.created_at)}</span>
                     {isLastMine && isRead && (
@@ -1421,6 +1896,7 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
                   </div>
                 </div>
               </div>
+              </React.Fragment>
             );
           })}
           {/* DM delete context menu */}
@@ -1461,10 +1937,45 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
           <div ref={bottomRef} />
         </div>
 
+        {/* Typing indicator */}
+        {isTyping && (
+          <div style={{ padding: '4px 20px', fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            <span style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
+              {[0, 1, 2].map(i => (
+                <span key={i} style={{
+                  width: '5px', height: '5px', borderRadius: '50%',
+                  background: 'var(--primary-color)',
+                  animation: `typingDot 1.2s ${i * 0.2}s infinite`,
+                  display: 'inline-block',
+                }} />
+              ))}
+            </span>
+            {target.name} is typing…
+          </div>
+        )}
+
         {/* Error */}
         {error && (
           <div style={{ padding: '4px 20px', background: '#fef2f2', color: '#dc2626', fontSize: '12px', flexShrink: 0 }}>
             {error}
+          </div>
+        )}
+
+        {/* Reply preview bar */}
+        {replyingTo && (
+          <div style={{
+            padding: '6px 16px', background: 'var(--bg-color)', borderTop: '1px solid var(--border-color)',
+            display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0,
+          }}>
+            <div style={{ flex: 1, borderLeft: '3px solid #667eea', paddingLeft: '8px' }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: '#667eea' }}>{replyingTo.senderName}</div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '360px' }}>
+                {replyingTo.text || '[file]'}
+              </div>
+            </div>
+            <button onClick={() => setReplyingTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', padding: '2px' }}>
+              <X size={14} strokeWidth={2} />
+            </button>
           </div>
         )}
 
@@ -1489,7 +2000,47 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
         <div style={{
           padding: '12px 16px', borderTop: '1px solid var(--border-color)',
           display: 'flex', alignItems: 'flex-end', gap: '8px', flexShrink: 0,
+          position: 'relative',
         }}>
+          {/* Emoji input picker */}
+          {showInputEmoji && smileBtnRef.current && (
+            <div
+              className="dm-emoji-input-picker"
+              onMouseDown={e => e.stopPropagation()}
+              style={{
+                position: 'fixed',
+                bottom: window.innerHeight - smileBtnRef.current.getBoundingClientRect().top + 8,
+                right: window.innerWidth - smileBtnRef.current.getBoundingClientRect().right,
+                zIndex: 800,
+              }}
+            >
+              <EmojiMartPicker
+                data={emojiData}
+                onEmojiSelect={e => {
+                  const emoji = e.native;
+                  const ta = textareaRef.current;
+                  if (ta) {
+                    const start = ta.selectionStart ?? text.length;
+                    const end = ta.selectionEnd ?? text.length;
+                    const newText = text.slice(0, start) + emoji + text.slice(end);
+                    onTextChange(newText);
+                    setTimeout(() => {
+                      ta.focus();
+                      ta.setSelectionRange(start + emoji.length, start + emoji.length);
+                    }, 10);
+                  } else {
+                    onTextChange(text + emoji);
+                  }
+                  // do NOT close — multi-emoji
+                }}
+                theme="auto"
+                previewPosition="none"
+                skinTonePosition="none"
+                maxFrequentRows={2}
+                perLine={9}
+              />
+            </div>
+          )}
           <button
             onClick={onFilePick}
             disabled={!!pendingFile}
@@ -1497,7 +2048,8 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
             style={{
               background: 'none', border: '1px solid var(--border-color)', borderRadius: '8px',
               padding: '8px 10px', cursor: pendingFile ? 'not-allowed' : 'pointer',
-              fontSize: '16px', color: pendingFile ? 'var(--text-secondary)' : '#667eea', flexShrink: 0,
+              color: pendingFile ? 'var(--text-secondary)' : '#667eea', flexShrink: 0,
+              display: 'flex', alignItems: 'center',
             }}
           ><Paperclip size={16} strokeWidth={1.75} /></button>
           <button
@@ -1511,6 +2063,7 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
             }}
           >Files</button>
           <textarea
+            ref={textareaRef}
             value={text}
             onChange={e => onTextChange(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -1525,7 +2078,18 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
             onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px'; }}
           />
           <button
-            onClick={onSend}
+            ref={smileBtnRef}
+            onClick={() => setShowInputEmoji(prev => !prev)}
+            title="Insert emoji"
+            style={{
+              background: 'none', border: '1px solid var(--border-color)', borderRadius: '8px',
+              padding: '8px 10px', cursor: 'pointer',
+              color: showInputEmoji ? '#667eea' : 'var(--text-secondary)', flexShrink: 0,
+              display: 'flex', alignItems: 'center',
+            }}
+          ><Smile size={16} strokeWidth={1.75} /></button>
+          <button
+            onClick={() => { onSend(replyingTo); setReplyingTo(null); }}
             disabled={sending || uploading || (!text.trim() && !pendingFile)}
             style={{
               background: '#667eea', color: 'white', border: 'none', borderRadius: '8px',
@@ -1537,6 +2101,85 @@ function DMModal({ target, messages, loading, error, text, onTextChange, pending
           </button>
         </div>
       </div>
+
+      {/* Reaction picker — fixed overlay so it's never clipped */}
+      {reactionPickerState && (
+        <div
+          className="dm-reaction-picker"
+          onMouseDown={e => e.stopPropagation()}
+          style={{ position: 'fixed', top: reactionPickerState.y, left: reactionPickerState.x, zIndex: 800 }}
+        >
+          <EmojiMartPicker
+            data={emojiData}
+            onEmojiSelect={e => {
+              const { msgId } = reactionPickerState;
+              setReactionPickerState(null);
+              onReact(msgId, e.native);
+            }}
+            theme="auto"
+            previewPosition="none"
+            skinTonePosition="none"
+            maxFrequentRows={2}
+            perLine={9}
+          />
+        </div>
+      )}
+
+      {/* Reaction Details Bottom Sheet */}
+      {reactionDetailsMsg && (() => {
+        const activeReactions = (reactionDetailsMsg.reactions || []).filter(r => r.user_ids?.length > 0);
+        const totalCount = activeReactions.reduce((s, r) => s + r.user_ids.length, 0);
+        const activeTab = reactionDetailsTab;
+        const setActiveTab = setReactionDetailsTab;
+        const rows = activeTab === 'all'
+          ? activeReactions.flatMap(r => r.user_ids.map(uid => ({ uid, emoji: r.emoji })))
+          : (activeReactions.find(r => r.emoji === activeTab)?.user_ids || []).map(uid => ({ uid, emoji: activeTab }));
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 700, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+            onClick={() => { setReactionDetailsMsg(null); setReactionDetailsTab('all'); }}
+          >
+            <div
+              style={{ width: '100%', maxWidth: '520px', background: 'var(--card-bg)', borderRadius: '18px 18px 0 0', maxHeight: '60vh', display: 'flex', flexDirection: 'column', animation: 'slideUpSheet 0.22s ease', boxShadow: '0 -4px 30px rgba(0,0,0,0.2)' }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div style={{ padding: '12px 20px 0', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                <span style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text-primary)' }}>Reactions</span>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', background: 'var(--bg-color)', borderRadius: '99px', padding: '1px 8px' }}>{totalCount}</span>
+                <button onClick={() => { setReactionDetailsMsg(null); setReactionDetailsTab('all'); }} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center' }}><X size={16} strokeWidth={2} /></button>
+              </div>
+              {/* Emoji tabs */}
+              <div style={{ display: 'flex', gap: '4px', padding: '8px 16px', borderBottom: '1px solid var(--border-color)', flexShrink: 0, overflowX: 'auto' }}>
+                <button
+                  onClick={() => setActiveTab('all')}
+                  style={{ background: activeTab === 'all' ? 'rgba(102,126,234,0.12)' : 'var(--bg-color)', border: `1.5px solid ${activeTab === 'all' ? 'var(--primary-color)' : 'var(--border-color)'}`, borderRadius: '99px', padding: '3px 12px', cursor: 'pointer', fontSize: '12px', fontWeight: 700, color: activeTab === 'all' ? 'var(--primary-color)' : 'var(--text-secondary)', whiteSpace: 'nowrap' }}
+                >All {totalCount}</button>
+                {activeReactions.map(r => (
+                  <button
+                    key={r.emoji}
+                    onClick={() => setActiveTab(r.emoji)}
+                    style={{ background: activeTab === r.emoji ? 'rgba(102,126,234,0.12)' : 'var(--bg-color)', border: `1.5px solid ${activeTab === r.emoji ? 'var(--primary-color)' : 'var(--border-color)'}`, borderRadius: '99px', padding: '3px 12px', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}
+                  >
+                    {r.emoji}
+                    <span style={{ fontSize: '12px', color: activeTab === r.emoji ? 'var(--primary-color)' : 'var(--text-secondary)', fontWeight: 700 }}>{r.user_ids.length}</span>
+                  </button>
+                ))}
+              </div>
+              {/* User rows */}
+              <div style={{ overflowY: 'auto', flex: 1, padding: '8px 0' }}>
+                {rows.length === 0 && <p style={{ color: 'var(--text-secondary)', fontSize: '13px', textAlign: 'center', padding: '20px 0' }}>No reactions yet.</p>}
+                {rows.map((row, i) => (
+                  <div key={`${row.uid}-${row.emoji}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 20px' }}>
+                    <Avatar user={{ username: resolveName(row.uid) }} size={36} />
+                    <span style={{ flex: 1, fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{resolveName(row.uid)}</span>
+                    <span style={{ fontSize: '22px' }}>{row.emoji}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -405,6 +405,9 @@ def get_classroom(classroom_id):
                     # phone: visible to CR always, or to everyone if member made it public
                     'phone': m.get('phone', '') if (is_cr or m.get('phone_public', False)) else None,
                     'phone_public': m.get('phone_public', False),
+                    'bio': m.get('bio', ''),
+                    'bio_flagged_reason': m.get('bio_flagged_reason', ''),
+                    'bio_flagged_by': m.get('bio_flagged_by', ''),
                 } for m in members],
                 'join_requests': join_requests if is_cr else [],
                 'semesters': formatted_semesters,
@@ -796,6 +799,57 @@ def flag_member_name(classroom_id):
     except Exception as e:
         logger.error(f"Flag member name error: {e}")
         return jsonify({'error': 'Failed to flag display name'}), 500
+
+
+@classroom_bp.route('/<classroom_id>/flag-member-bio', methods=['POST'])
+@token_required
+def flag_member_bio(classroom_id):
+    """CR flags a member's bio as inappropriate; cleared when member updates their bio."""
+    from database import get_db
+    from middleware import get_active_semester
+
+    try:
+        data = request.get_json()
+        cr_user_id = request.user['user_id']
+        target_user_id = data.get('user_id', '').strip()
+        reason = data.get('reason', '').strip()
+
+        if not target_user_id:
+            return jsonify({'error': 'User ID is required'}), 400
+        if not reason:
+            return jsonify({'error': 'Reason is required'}), 400
+
+        db = get_db()
+        classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
+        if not classroom:
+            return jsonify({'error': 'Classroom not found'}), 404
+
+        active_sem = get_active_semester(db, classroom_id)
+        if not active_sem or cr_user_id not in [str(c) for c in active_sem.get('cr_ids', [])]:
+            return jsonify({'error': 'Only a CR can flag bios'}), 403
+
+        target_oid = ObjectId(target_user_id)
+        if not is_member_of_classroom(classroom, target_oid):
+            return jsonify({'error': 'User is not a member'}), 400
+        if not db.users.find_one({'_id': target_oid}):
+            return jsonify({'error': 'User not found'}), 404
+
+        cr = db.users.find_one({'_id': ObjectId(cr_user_id)}, {'fullName': 1, 'username': 1})
+        cr_name = (cr.get('fullName') or cr.get('username', 'CR')) if cr else 'CR'
+
+        db.users.update_one(
+            {'_id': target_oid},
+            {'$set': {
+                'bio_flagged_reason': reason,
+                'bio_flagged_by': cr_name,
+                'bio_flagged_at': datetime.now(timezone.utc),
+            }}
+        )
+        return jsonify({'message': 'Bio flagged. Member will be prompted to update it.'}), 200
+
+    except Exception as e:
+        logger.error(f"Flag member bio error: {e}")
+        return jsonify({'error': 'Failed to flag bio'}), 500
 
 
 @classroom_bp.route('/<classroom_id>/activity', methods=['GET'])

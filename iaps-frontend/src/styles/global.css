@@ -5,11 +5,66 @@
   --card-bg: #ffffff;
   --text-primary: #333333;
   --text-secondary: #666666;
+  --text-muted: #9ca3af;
+  --text-on-primary: #ffffff;
   --border-color: #e2e8f0;
   --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
   --error-color: #dc3545;
   --success-color: #28a745;
+
+  /* Status */
+  --online-color: #22c55e;
+  --offline-color: #9ca3af;
+
+  /* Overlays */
+  --overlay-bg: rgba(0, 0, 0, 0.5);
+  --overlay-dark: rgba(0, 0, 0, 0.85);
+
+  /* Primary tints */
+  --primary-faint: rgba(102, 126, 234, 0.05);
+  --primary-subtle: rgba(102, 126, 234, 0.1);
+  --primary-medium: rgba(102, 126, 234, 0.18);
+  --primary-focus: rgba(102, 126, 234, 0.3);
+
+  /* Semantic backgrounds / text / borders */
+  --success-bg: #f0fdf4;
+  --success-text: #166534;
+  --success-border: #86efac;
+  --error-bg: #fef2f2;
+  --error-text: #991b1b;
+  --error-border: #fca5a5;
+  --warning-bg: #fef3c7;
+  --warning-text: #92400e;
+  --warning-border: #fcd34d;
+  --info-bg: #dbeafe;
+  --info-text: #1e40af;
+  --info-border: #93c5fd;
+
+  /* Badge colors */
+  --badge-owner-bg: #fef3c7;
+  --badge-owner-text: #92400e;
+  --badge-cr-bg: #e0f2fe;
+  --badge-cr-text: #0284c7;
+  --badge-teacher-bg: #e3f2fd;
+  --badge-teacher-text: #1976d2;
+  --badge-purple-bg: #ede9fe;
+  --badge-purple-text: #5b21b6;
+  --badge-green-bg: #dcfce7;
+  --badge-green-text: #166534;
+  --badge-red-bg: #fee2e2;
+  --badge-red-text: #991b1b;
+  --badge-orange-bg: #fff0eb;
+  --badge-orange-text: #c2410c;
+
+  /* Form */
+  --input-disabled-bg: #f5f5f5;
+  --input-border: #d1d5db;
+
+  /* UI */
+  --subtle-bg: #f3f4f6;
+  --unselected-text: #374151;
+  --divider-color: #dddddd;
 
   /* Timetable cell type colors */
   --cell-lecture-bg: #dbeafe; --cell-lecture-text: #1e40af; --cell-lecture-border: #93c5fd;
@@ -33,9 +88,6 @@
   --danger-color: #dc2626;
   --warning-color: #d97706;
   --info-color: #2563eb;
-  --input-border: #d1d5db;
-  --subtle-bg: #f3f4f6;
-  --unselected-text: #374151;
 }
 
 [data-theme="dark"] {
@@ -43,9 +95,57 @@
   --card-bg: #1f2d42;
   --text-primary: #c8d6e8;
   --text-secondary: #8ba4be;
+  --text-muted: #6b7280;
   --border-color: #2d4060;
   --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.35), 0 1px 2px -1px rgb(0 0 0 / 0.35);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.35), 0 4px 6px -4px rgb(0 0 0 / 0.35);
+
+  /* Overlays */
+  --overlay-bg: rgba(0, 0, 0, 0.7);
+  --overlay-dark: rgba(0, 0, 0, 0.92);
+
+  /* Primary tints */
+  --primary-faint: rgba(102, 126, 234, 0.08);
+  --primary-subtle: rgba(102, 126, 234, 0.15);
+  --primary-medium: rgba(102, 126, 234, 0.22);
+  --primary-focus: rgba(102, 126, 234, 0.4);
+
+  /* Semantic */
+  --success-bg: #052e20;
+  --success-text: #6ee7b7;
+  --success-border: #065f46;
+  --error-bg: #3b0a0a;
+  --error-text: #fca5a5;
+  --error-border: #991b1b;
+  --warning-bg: #3d2e00;
+  --warning-text: #fcd34d;
+  --warning-border: #92400e;
+  --info-bg: #1e3a5f;
+  --info-text: #93c5fd;
+  --info-border: #1e40af;
+
+  /* Badge colors — dark */
+  --badge-owner-bg: #3d2e00;
+  --badge-owner-text: #fcd34d;
+  --badge-cr-bg: #1e3a5f;
+  --badge-cr-text: #93c5fd;
+  --badge-teacher-bg: #1a3a6b;
+  --badge-teacher-text: #93c5fd;
+  --badge-purple-bg: #2d1b69;
+  --badge-purple-text: #c4b5fd;
+  --badge-green-bg: #052e20;
+  --badge-green-text: #6ee7b7;
+  --badge-red-bg: #3b0a0a;
+  --badge-red-text: #fca5a5;
+  --badge-orange-bg: #3d1500;
+  --badge-orange-text: #fb923c;
+
+  /* Form */
+  --input-disabled-bg: #253040;
+  --input-border: #2d4060;
+  --subtle-bg: #252f3e;
+  --unselected-text: #c8d6e8;
+  --divider-color: #2d4060;
 
   /* Timetable cell type colors — dark mode */
   --cell-lecture-bg: #1e3a5f; --cell-lecture-text: #93c5fd; --cell-lecture-border: #1e40af;
@@ -69,9 +169,6 @@
   --danger-color: #ef4444;
   --warning-color: #f59e0b;
   --info-color: #3b82f6;
-  --input-border: #2d4060;
-  --subtle-bg: #252f3e;
-  --unselected-text: #c8d6e8;
 }
 
 * {
@@ -135,12 +232,12 @@ body {
 .form-group select:focus {
   outline: none;
   border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  box-shadow: 0 0 0 3px var(--primary-subtle);
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+  color: var(--text-on-primary);
   border: none;
   padding: 0.75rem 1.5rem;
   border-radius: 0.5rem;
@@ -152,7 +249,7 @@ body {
 
 .btn-primary:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+  box-shadow: 0 5px 15px var(--primary-focus);
 }
 
 .btn-primary:disabled {
@@ -173,13 +270,13 @@ body {
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #f0f4ff;
+  background: var(--primary-faint);
 }
 
 .error-message {
-  background-color: #fee;
-  color: #c33;
-  border-left: 4px solid #c33;
+  background-color: var(--error-bg);
+  color: var(--error-text);
+  border-left: 4px solid var(--error-border);
   padding: 12px 15px;
   border-radius: 0.5rem;
   margin-bottom: 1rem;
@@ -187,9 +284,9 @@ body {
 }
 
 .success-message {
-  background-color: #efe;
-  color: #2a7a2a;
-  border-left: 4px solid #3c3;
+  background-color: var(--success-bg);
+  color: var(--success-text);
+  border-left: 4px solid var(--success-border);
   padding: 12px 15px;
   border-radius: 0.5rem;
   margin-bottom: 1rem;
@@ -220,6 +317,12 @@ h1 { letter-spacing: -0.02em; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 99px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+/* ── Typing indicator dots ──────────────────────────────────────────────── */
+@keyframes typingDot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30%            { opacity: 1;    transform: translateY(-3px); }
+}
 
 /* ── Print styles ───────────────────────────────────────────────────────── */
 @media print {

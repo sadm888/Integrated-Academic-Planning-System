@@ -28,6 +28,7 @@ from werkzeug.utils import secure_filename
 from middleware import token_required, SECRET_KEY
 from socketio_instance import socketio
 from utils.mime_check import is_dangerous
+from utils import toggle_reaction
 
 dm_bp = Blueprint('dm', __name__, url_prefix='/api/dm')
 logger = logging.getLogger(__name__)
@@ -48,8 +49,10 @@ def _dm_room(classroom_id, user_a, user_b):
 
 def _is_classroom_member(db, classroom_id, user_id):
     try:
-        classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
-        return bool(classroom and user_id in [str(m) for m in classroom.get('members', [])])
+        return db.classrooms.count_documents(
+            {'_id': ObjectId(classroom_id), 'members': ObjectId(user_id)},
+            limit=1,
+        ) > 0
     except Exception:
         return False
 
@@ -73,12 +76,16 @@ def _serialize_dm(msg):
         'sender_name': msg.get('sender_name', ''),
         'profile_picture': msg.get('profile_picture'),
         'text': None if deleted else msg.get('text'),
-        'created_at': msg['created_at'].isoformat() + 'Z',
+        'created_at': msg['created_at'].strftime('%Y-%m-%dT%H:%M:%S.') + f"{msg['created_at'].microsecond // 1000:03d}Z",
         'read_by': msg.get('read_by', []),
         'deleted_for_everyone': deleted,
+        'reactions': msg.get('reactions', []),
+        'pinned': msg.get('pinned', False),
     }
     if msg.get('file') and not deleted:
         result['file'] = msg['file']
+    if msg.get('reply_to'):
+        result['reply_to'] = msg['reply_to']
     return result
 
 
@@ -111,6 +118,27 @@ def handle_join_dm(data):
     join_room(room)
 
 
+# ─── Socket.IO: DM typing ─────────────────────────────────────────────────────
+
+@socketio.on('dm_typing')
+def handle_dm_typing(data):
+    """Broadcast a typing notification to the other participant in a DM thread."""
+    from routes.chat_routes import _connected_users
+    user_data = _connected_users.get(request.sid)
+    if not user_data:
+        return
+    classroom_id = (data.get('classroom_id') or '').strip()
+    with_user_id = (data.get('with_user_id') or '').strip()
+    if not classroom_id or not with_user_id:
+        return
+    from flask_socketio import emit
+    room = _dm_room(classroom_id, user_data['user_id'], with_user_id)
+    emit('dm_typing', {
+        'user_id': user_data['user_id'],
+        'name': user_data.get('full_name') or user_data.get('username', ''),
+    }, to=room, skip_sid=request.sid)
+
+
 # ─── REST: send text DM ───────────────────────────────────────────────────────
 
 @dm_bp.route('/<classroom_id>/send', methods=['POST'])
@@ -127,6 +155,7 @@ def send_dm(classroom_id):
         data = request.get_json()
         to_user_id = (data.get('to_user_id') or '').strip()
         text = (data.get('text') or '').strip() or None
+        reply_to_id = (data.get('reply_to_id') or '').strip() or None
 
         if not to_user_id:
             return jsonify({'error': 'to_user_id required'}), 400
@@ -146,6 +175,21 @@ def send_dm(classroom_id):
         sender_name = (sender_doc.get('fullName') or sender_doc.get('username', '')) if sender_doc else ''
         profile_picture = (sender_doc.get('profile_picture') or None) if sender_doc else None
 
+        # Resolve reply_to snippet
+        reply_to = None
+        if reply_to_id:
+            try:
+                parent = db.dm_messages.find_one({'_id': ObjectId(reply_to_id)}, {'text': 1, 'sender_name': 1, 'sender_id': 1})
+                if parent:
+                    reply_to = {
+                        'id': reply_to_id,
+                        'text': parent.get('text', ''),
+                        'sender_name': parent.get('sender_name', ''),
+                        'sender_id': parent.get('sender_id', ''),
+                    }
+            except Exception:
+                pass
+
         msg = {
             'classroom_id': classroom_id,
             'sender_id': user_id,
@@ -157,6 +201,8 @@ def send_dm(classroom_id):
             'created_at': datetime.now(timezone.utc),
             'read_by': [user_id],
         }
+        if reply_to:
+            msg['reply_to'] = reply_to
         result = db.dm_messages.insert_one(msg)
         msg['_id'] = result.inserted_id
         payload = _serialize_dm(msg)
@@ -484,3 +530,66 @@ def get_member_dm_stats(classroom_id):
     except Exception as e:
         logger.error(f"get_member_dm_stats error: {e}")
         return jsonify({'error': 'Failed to get stats'}), 500
+
+
+# ─── REST: DM reactions ───────────────────────────────────────────────────────
+
+@dm_bp.route('/<classroom_id>/messages/<message_id>/react', methods=['POST'])
+@token_required
+def react_to_dm(classroom_id, message_id):
+    """Toggle a reaction emoji on a DM message."""
+    from database import get_db
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+        if not _is_classroom_member(db, classroom_id, user_id):
+            return jsonify({'error': 'Not a member'}), 403
+        data = request.get_json() or {}
+        emoji = (data.get('emoji') or '').strip()
+        if not emoji:
+            return jsonify({'error': 'emoji is required'}), 400
+        msg = db.dm_messages.find_one({'_id': ObjectId(message_id), 'classroom_id': classroom_id})
+        if not msg:
+            return jsonify({'error': 'Message not found'}), 404
+        if msg['sender_id'] != user_id and msg['receiver_id'] != user_id:
+            return jsonify({'error': 'Access denied'}), 403
+
+        reactions = toggle_reaction(msg.get('reactions', []), emoji, user_id)
+        db.dm_messages.update_one({'_id': ObjectId(message_id)}, {'$set': {'reactions': reactions}})
+        updated = db.dm_messages.find_one({'_id': ObjectId(message_id)})
+        payload = _serialize_dm(updated)
+        room = _dm_room(classroom_id, msg['sender_id'], msg['receiver_id'])
+        socketio.emit('dm_reaction_updated', payload, to=room)
+        return jsonify({'message': payload}), 200
+    except Exception as e:
+        logger.error(f"react_to_dm error: {e}")
+        return jsonify({'error': 'Failed to react'}), 500
+
+
+# ─── REST: DM pin toggle ───────────────────────────────────────────────────────
+
+@dm_bp.route('/<classroom_id>/messages/<message_id>/pin', methods=['POST'])
+@token_required
+def pin_dm(classroom_id, message_id):
+    """Toggle pin on a DM message. Either party can pin."""
+    from database import get_db
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+        if not _is_classroom_member(db, classroom_id, user_id):
+            return jsonify({'error': 'Not a member'}), 403
+        msg = db.dm_messages.find_one({'_id': ObjectId(message_id), 'classroom_id': classroom_id})
+        if not msg:
+            return jsonify({'error': 'Message not found'}), 404
+        if msg['sender_id'] != user_id and msg['receiver_id'] != user_id:
+            return jsonify({'error': 'Access denied'}), 403
+        new_pinned = not msg.get('pinned', False)
+        db.dm_messages.update_one({'_id': ObjectId(message_id)}, {'$set': {'pinned': new_pinned}})
+        updated = db.dm_messages.find_one({'_id': ObjectId(message_id)})
+        payload = _serialize_dm(updated)
+        room = _dm_room(classroom_id, msg['sender_id'], msg['receiver_id'])
+        socketio.emit('dm_pin_updated', payload, to=room)
+        return jsonify({'message': payload}), 200
+    except Exception as e:
+        logger.error(f"pin_dm error: {e}")
+        return jsonify({'error': 'Failed to pin'}), 500

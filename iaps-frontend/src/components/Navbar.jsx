@@ -43,15 +43,23 @@ function Navbar({ user, onLogout, dmUnreadCount = 0 }) {
       <span
         onClick={() => navigate('/classrooms')}
         style={{
-          color: 'white',
-          fontWeight: 800,
-          fontSize: '20px',
-          letterSpacing: '0.5px',
-          cursor: 'pointer',
-          userSelect: 'none',
+          display: 'flex', alignItems: 'center', gap: '8px',
+          cursor: 'pointer', userSelect: 'none',
+          transition: 'transform 0.15s ease, opacity 0.15s ease',
         }}
+        onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.04)'}
+        onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
       >
-        IAPS
+        {/* Graduation cap — white on transparent (navbar bg is already purple) */}
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="28" height="28" style={{ flexShrink: 0, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.2))' }}>
+          <polygon points="16,5 30,11.5 16,18 2,11.5" fill="white"/>
+          <path d="M10,14.5 L10,21.5 Q16,25 22,21.5 L22,14.5 L16,18 Z" fill="rgba(255,255,255,0.85)"/>
+          <line x1="30" y1="11.5" x2="30" y2="20" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+          <circle cx="30" cy="21.5" r="2" fill="white"/>
+        </svg>
+        <span style={{ color: 'white', fontWeight: 800, fontSize: '20px', letterSpacing: '0.5px' }}>
+          IAPS
+        </span>
       </span>
 
       {/* Nav links */}

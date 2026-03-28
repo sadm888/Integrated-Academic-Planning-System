@@ -45,6 +45,10 @@ def _format_user(user):
         'photo_removed_by': user.get('photo_removed_by'),
         'name_removed_reason': user.get('name_removed_reason'),
         'name_removed_by': user.get('name_removed_by'),
+        'show_online_status': user.get('show_online_status', True),
+        'bio': user.get('bio', ''),
+        'bio_flagged_reason': user.get('bio_flagged_reason'),
+        'bio_flagged_by': user.get('bio_flagged_by'),
     }
 
 
@@ -124,6 +128,14 @@ def update_profile():
             updates['phone'] = data['phone'].strip()
         if 'phone_public' in data:
             updates['phone_public'] = bool(data['phone_public'])
+        if 'bio' in data:
+            bio = data['bio'].strip()
+            if len(bio) > 200:
+                return jsonify({'error': 'Bio must be 200 characters or less'}), 400
+            updates['bio'] = bio
+            # Clear any existing bio flag when user updates their bio
+            updates['bio_flagged_reason'] = None
+            updates['bio_flagged_by'] = None
 
         if not updates:
             return jsonify({'error': 'No fields to update'}), 400
@@ -139,6 +151,36 @@ def update_profile():
     except Exception as e:
         logger.error(f"update_profile error: {e}")
         return jsonify({'error': 'Failed to update profile'}), 500
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/settings/privacy
+# ---------------------------------------------------------------------------
+@settings_bp.route('/privacy', methods=['PATCH'])
+@token_required
+def update_privacy():
+    try:
+        data = request.get_json() or {}
+        database = db.get_db()
+        user_id = request.user['user_id']
+        updates = {}
+        if 'show_online_status' in data:
+            updates['show_online_status'] = bool(data['show_online_status'])
+        if not updates:
+            return jsonify({'error': 'No fields to update'}), 400
+        database.users.update_one({'_id': ObjectId(user_id)}, {'$set': updates})
+        user = database.users.find_one({'_id': ObjectId(user_id)})
+        # Immediately broadcast status change to any active socket rooms
+        if 'show_online_status' in updates:
+            try:
+                from routes.chat_routes import notify_status_change
+                notify_status_change(user_id, updates['show_online_status'])
+            except Exception as notify_err:
+                logger.warning(f"notify_status_change error: {notify_err}")
+        return jsonify({'user': _format_user(user)}), 200
+    except Exception as e:
+        logger.error(f"update_privacy error: {e}")
+        return jsonify({'error': 'Failed to update privacy settings'}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -543,6 +585,28 @@ def download_personal_doc(doc_id):
     except Exception as e:
         logger.error(f"download_personal_doc error: {e}")
         return jsonify({'error': 'Failed to serve document'}), 500
+
+
+@settings_bp.route('/login-activity', methods=['GET'])
+@token_required
+def get_login_activity():
+    """Return last 10 login events for the current user."""
+    try:
+        user_id = request.user['user_id']
+        database = db.get_db()
+        entries = list(
+            database.login_activity
+            .find({'user_id': user_id}, {'_id': 0, 'user_agent': 0})
+            .sort('logged_in_at', -1)
+            .limit(10)
+        )
+        for e in entries:
+            if isinstance(e.get('logged_in_at'), datetime):
+                e['logged_in_at'] = e['logged_in_at'].isoformat()
+        return jsonify({'activity': entries}), 200
+    except Exception as e:
+        logger.error(f"get_login_activity error: {e}")
+        return jsonify({'error': 'Failed to load login activity'}), 500
 
 
 @settings_bp.route('/personal-docs/<doc_id>', methods=['DELETE'])

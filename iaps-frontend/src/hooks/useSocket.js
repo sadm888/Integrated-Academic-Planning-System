@@ -45,6 +45,13 @@ export function useSocket(semesterId, handlers = {}) {
     socket.on('message_pinned',     (data) => handlersRef.current.onPinned?.(data));
     socket.on('message_unpinned',   (data) => handlersRef.current.onUnpinned?.(data));
     socket.on('member_removed',     (data) => handlersRef.current.onMemberRemoved?.(data));
+    socket.on('user_online',        (data) => handlersRef.current.onUserOnline?.(data));
+    socket.on('user_offline',       (data) => handlersRef.current.onUserOffline?.(data));
+    socket.on('user_typing',          (data) => handlersRef.current.onUserTyping?.(data));
+    socket.on('poll_updated',         (data) => handlersRef.current.onPollUpdated?.(data));
+    socket.on('mention_notification', (data) => handlersRef.current.onMention?.(data));
+    socket.on('reaction_updated',     (data) => handlersRef.current.onReactionUpdated?.(data));
+    socket.on('read_receipt',         (data) => handlersRef.current.onReadReceipt?.(data));
 
     return () => {
       socket.disconnect();

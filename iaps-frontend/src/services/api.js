@@ -62,6 +62,7 @@ export const classroomAPI = {
   removeMember: (classroomId, userId, reason = '') => api.post(`/classroom/${classroomId}/remove-member`, { user_id: userId, reason }),
   removeMemberAvatar: (classroomId, userId, reason) => api.post(`/classroom/${classroomId}/remove-member-avatar`, { user_id: userId, reason }),
   flagMemberName: (classroomId, userId, reason) => api.post(`/classroom/${classroomId}/flag-member-name`, { user_id: userId, reason }),
+  flagMemberBio: (classroomId, userId, reason) => api.post(`/classroom/${classroomId}/flag-member-bio`, { user_id: userId, reason }),
   delete: (classroomId) => api.delete(`/classroom/${classroomId}`),
   getActivity: (classroomId) => api.get(`/classroom/${classroomId}/activity`),
   quitCr: (classroomId, semesterId) => api.post(`/classroom/${classroomId}/semester/${semesterId}/quit-cr`),
@@ -142,10 +143,11 @@ export const calendarAPI = {
 export const chatAPI = {
   getMessages: (semesterId, limit = 50, beforeId = null) =>
     api.get(`/chat/${semesterId}/messages`, { params: { limit, ...(beforeId && { before_id: beforeId }) } }),
-  uploadFile: (semesterId, file, text = '') => {
+  uploadFile: (semesterId, file, text = '', replyToId = null) => {
     const fd = new FormData();
     fd.append('file', file);
     if (text) fd.append('text', text);
+    if (replyToId) fd.append('reply_to_id', replyToId);
     return api.post(`/chat/${semesterId}/upload`, fd, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
@@ -161,12 +163,21 @@ export const chatAPI = {
     api.delete(`/chat/${semesterId}/pin`, { params: messageId ? { message_id: messageId } : {} }),
   getUnreadCounts: () => api.get('/chat/unread-counts'),
   markRead: (semesterId) => api.post(`/chat/${semesterId}/read`),
+  getOnlineMembers: (semesterId) => api.get(`/chat/${semesterId}/online-members`),
+  getOnlineStatus: (userIds) => api.get('/chat/online-status', { params: { user_ids: userIds } }),
+  searchMessages: (semesterId, q) => api.get(`/chat/${semesterId}/search`, { params: { q } }),
+  createPoll: (semesterId, question, options) => api.post(`/chat/${semesterId}/polls`, { question, options }),
+  votePoll: (semesterId, messageId, optionIndex) => api.post(`/chat/${semesterId}/polls/${messageId}/vote`, { option_index: optionIndex }),
+  closePoll: (semesterId, messageId) => api.post(`/chat/${semesterId}/polls/${messageId}/close`),
+  reactToMessage: (semesterId, messageId, emoji) => api.post(`/chat/${semesterId}/messages/${messageId}/react`, { emoji }),
+  getReadReceipts: (semesterId) => api.get(`/chat/${semesterId}/read-receipts`),
 };
 
 // Settings endpoints
 export const settingsAPI = {
   getMe: () => api.get('/settings/me'),
   updateProfile: (data) => api.patch('/settings/update-profile', data),
+  updatePrivacy: (data) => api.patch('/settings/privacy', data),
   uploadAvatar: (file) => {
     const fd = new FormData();
     fd.append('avatar', file);
@@ -193,6 +204,7 @@ export const settingsAPI = {
   getPersonalDocUrl: (docId) => fileUrl(`settings/personal-docs/${docId}`),
   deletePersonalDoc: (docId) => api.delete(`/settings/personal-docs/${docId}`),
   verifyPassword: (password) => api.post('/settings/verify-password', { password }),
+  getLoginActivity: () => api.get('/settings/login-activity'),
 };
 
 // Links endpoints
@@ -274,8 +286,8 @@ export const academicAPI = {
 
 // DM (direct message) endpoints
 export const dmAPI = {
-  sendMessage: (classroomId, toUserId, text) =>
-    api.post(`/dm/${classroomId}/send`, { to_user_id: toUserId, text }),
+  sendMessage: (classroomId, toUserId, text, extra = {}) =>
+    api.post(`/dm/${classroomId}/send`, { to_user_id: toUserId, text, ...extra }),
   uploadFile: (classroomId, toUserId, file, text = '') => {
     const fd = new FormData();
     fd.append('file', file);
@@ -297,6 +309,8 @@ export const dmAPI = {
   getMemberStats: (classroomId) => api.get(`/dm/${classroomId}/member-stats`),
   getUnreadBySender: (classroomId) => api.get(`/dm/${classroomId}/unread-by-sender`),
   getUnreadByClassroom: () => api.get('/dm/unread-by-classroom'),
+  reactToDm: (classroomId, messageId, emoji) => api.post(`/dm/${classroomId}/messages/${messageId}/react`, { emoji }),
+  pinDm: (classroomId, messageId) => api.post(`/dm/${classroomId}/messages/${messageId}/pin`),
 };
 
 // Timetable endpoints
