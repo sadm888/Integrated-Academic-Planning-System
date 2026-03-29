@@ -146,7 +146,6 @@ function FileRow({ resource, onDelete, onDragStart, canDelete, isCr, semesterId,
 // ── Section panel ────────────────────────────────────────────────────────────
 
 function SectionPanel({ section, files, semesterId, subjectId, onDelete, onDrop, uploading, uploadProgress, onUpload, isCr, userId, onTogglePublic, onHide, folders, user }) {
-  const [dragOver, setDragOver] = useState(false);
   const [pendingFile, setPendingFile] = useState(null); // staged file waiting for confirm
   const [showFilePicker, setShowFilePicker] = useState(false);
   const inputRef = useRef(null);
@@ -254,33 +253,17 @@ function SectionPanel({ section, files, semesterId, subjectId, onDelete, onDrop,
       )}
 
       <div
-        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={e => {
-          e.preventDefault(); setDragOver(false);
-          // If a real file is dragged in from outside (not a resource move), stage it
-          if (e.dataTransfer.files?.length > 0) {
-            setPendingFile(e.dataTransfer.files[0]);
-          } else {
-            onDrop(e, section.id);
-          }
-        }}
+        onDrop={e => { e.preventDefault(); onDrop(e, section.id); }}
+        onDragOver={e => e.preventDefault()}
         style={{
-          minHeight: '56px', borderRadius: '8px',
-          border: `2px dashed ${dragOver ? '#667eea' : 'var(--border-color)'}`,
-          background: dragOver ? 'rgba(102,126,234,0.1)' : 'transparent',
-          padding: files.length ? '8px' : '0',
+          minHeight: files.length ? '0' : '32px',
           display: 'flex', flexDirection: 'column', gap: '6px',
-          transition: 'all 0.15s',
         }}
       >
         {files.length === 0 && (
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            height: '52px', color: 'var(--text-secondary)', fontSize: '12px',
-          }}>
-            {canUpload ? 'Drop files here or click Upload' : 'No files yet'}
-          </div>
+          <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', padding: '4px 0' }}>
+            No files yet
+          </p>
         )}
         {files.map(r => (
           <FileRow
@@ -386,11 +369,16 @@ function Academics({ user }) {
     }));
   }, [viewLevel, activeSubjectId, activeSubjectName, activeSectionId, activeFolderId, semesterId]);
 
-  // Restore subject data when returning with a saved activeSubjectId
+  // When semester reloads: if viewing a subject that no longer exists, go back to list.
+  // If subject was renamed in-place, re-select it to pick up the new name.
   useEffect(() => {
     if (!semester || !activeSubjectId || viewLevel !== 'sections') return;
     const subject = semester.subjects?.find(s => String(s.id) === String(activeSubjectId));
-    if (subject) selectSubject(subject, { restoreSectionId: activeSectionId, restoreFolderId: activeFolderId });
+    if (!subject) {
+      backToSubjects();
+    } else if (subject.name !== activeSubjectName) {
+      selectSubject(subject, { restoreSectionId: activeSectionId, restoreFolderId: activeFolderId });
+    }
   }, [semester]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -485,6 +473,26 @@ function Academics({ user }) {
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to add subject');
     } finally { setSubjectLoading(false); }
+  };
+
+  const handleSyncSubjects = async () => {
+    setSubjectLoading(true);
+    setError('');
+    try {
+      await subjectAPI.syncFromTimetable(semesterId);
+      await reloadSemester();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Sync failed');
+    } finally { setSubjectLoading(false); }
+  };
+
+  const handleToggleResourcesVisible = async (subjectId, currentlyVisible) => {
+    try {
+      await subjectAPI.update(subjectId, { resources_visible: !currentlyVisible });
+      await reloadSemester();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update visibility');
+    }
   };
 
   const handleDeleteSubject = async (subjectId, subjectName) => {
@@ -709,7 +717,9 @@ function Academics({ user }) {
   };
 
   const isCr = semester?.is_user_cr || false;
-  const subjects = semester?.subjects || [];
+  const allSubjects = semester?.subjects || [];
+  // Non-CRs only see subjects where resources_visible is not explicitly false
+  const subjects = isCr ? allSubjects : allSubjects.filter(s => s.resources_visible !== false);
   // Check if user owns the currently selected personal subject
   const activeSubject = subjects.find(s => s.id === activeSubjectId);
   const isSubjectOwner = Boolean(activeSubject?.personal && activeSubject?.created_by === user?.id);
@@ -799,13 +809,24 @@ function Academics({ user }) {
                       </div>
                     </button>
                     {isCr && !sub.personal && (
-                      <button
-                        onClick={() => handleDeleteSubject(sub.id, sub.name)}
-                        title="Delete subject"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '14px', padding: '4px 5px', borderRadius: '4px', flexShrink: 0 }}
-                        onMouseEnter={e => { e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.background = '#fef2f2'; }}
-                        onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-secondary)'; e.currentTarget.style.background = 'none'; }}
-                      ><X size={13} strokeWidth={2} /></button>
+                      <>
+                        <button
+                          onClick={() => handleToggleResourcesVisible(sub.id, sub.resources_visible !== false)}
+                          title={sub.resources_visible === false ? 'Hidden from students — click to show' : 'Visible to students — click to hide'}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px 5px', borderRadius: '4px', flexShrink: 0, color: sub.resources_visible === false ? 'var(--text-muted)' : 'var(--text-secondary)', opacity: sub.resources_visible === false ? 0.5 : 1 }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'var(--border-color)'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                        >
+                          {sub.resources_visible === false ? <EyeOff size={13} strokeWidth={2} /> : <Eye size={13} strokeWidth={2} />}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSubject(sub.id, sub.name)}
+                          title="Delete subject"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '14px', padding: '4px 5px', borderRadius: '4px', flexShrink: 0 }}
+                          onMouseEnter={e => { e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.background = '#fef2f2'; }}
+                          onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-secondary)'; e.currentTarget.style.background = 'none'; }}
+                        ><X size={13} strokeWidth={2} /></button>
+                      </>
                     )}
                   </div>
                 ))
@@ -827,7 +848,7 @@ function Academics({ user }) {
                       style={{ padding: '7px 10px', border: '1.5px solid var(--border-color)', borderRadius: '6px', fontSize: '12px', background: 'var(--bg-color)', color: 'var(--text-primary)' }}
                     />
                     <div style={{ display: 'flex', gap: '6px' }}>
-                      <button type="submit" disabled={subjectLoading || !newSubjectName.trim()} style={{ flex: 1, padding: '6px', background: '#667eea', color: 'white', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                      <button type="submit" disabled={subjectLoading || !newSubjectName.trim()} style={{ flex: 1, padding: '6px', background: 'var(--primary-color)', color: 'var(--text-on-primary)', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
                         {subjectLoading ? '…' : 'Add'}
                       </button>
                       <button type="button" onClick={() => { setShowAddSubject(false); setNewSubjectName(''); setNewSubjectCode(''); }} style={{ padding: '6px 10px', background: 'var(--bg-color)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}>
@@ -836,10 +857,18 @@ function Academics({ user }) {
                     </div>
                   </form>
                 ) : (
-                  <button
-                    onClick={() => setShowAddSubject(true)}
-                    style={{ width: '100%', padding: '7px', background: 'rgba(102,126,234,0.08)', color: '#667eea', border: '1.5px dashed rgba(102,126,234,0.4)', borderRadius: '7px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-                  >+ Add Subject</button>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <button
+                      onClick={() => setShowAddSubject(true)}
+                      style={{ width: '100%', padding: '7px', background: 'var(--primary-bg, rgba(102,126,234,0.08))', color: 'var(--primary-color)', border: '1.5px dashed var(--primary-color)', borderRadius: '7px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', opacity: subjectLoading ? 0.6 : 1 }}
+                    >+ Add Subject</button>
+                    <button
+                      onClick={handleSyncSubjects}
+                      disabled={subjectLoading}
+                      title="Re-link subjects from the current timetable. Renames subjects that changed and creates any missing ones."
+                      style={{ width: '100%', padding: '7px', background: 'var(--bg-color)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: '7px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', opacity: subjectLoading ? 0.6 : 1 }}
+                    >{subjectLoading ? 'Syncing…' : '↻ Sync from Timetable'}</button>
+                  </div>
                 )}
               </div>
             )}

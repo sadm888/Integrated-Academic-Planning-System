@@ -114,7 +114,7 @@ class TestLogin:
             'password': 'wrongpassword',
         })
         assert resp.status_code == 401
-        assert 'Invalid credentials' in resp.get_json()['error']
+        assert 'Incorrect password' in resp.get_json()['error']
 
     def test_login_nonexistent_user(self, client):
         resp = client.post('/api/auth/login', json={
@@ -122,6 +122,15 @@ class TestLogin:
             'password': 'password123',
         })
         assert resp.status_code == 401
+        assert 'No account found' in resp.get_json()['error']
+
+    def test_login_nonexistent_username(self, client):
+        resp = client.post('/api/auth/login', json={
+            'email': 'ghostuser',
+            'password': 'password123',
+        })
+        assert resp.status_code == 401
+        assert 'No account found' in resp.get_json()['error']
 
     def test_login_missing_email(self, client):
         resp = client.post('/api/auth/login', json={'password': 'password123'})

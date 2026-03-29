@@ -11,7 +11,7 @@ const Login = ({ onAuthSuccess }) => {
   const [error, setError] = useState('');
   const pwRef = useRef(null);
 
-  const handleChange = e => { setForm(f => ({ ...f, [e.target.name]: e.target.value })); setError(''); };
+  const handleChange = e => { setForm(f => ({ ...f, [e.target.name]: e.target.value })); };
   const pw = type => { if (pwRef.current) pwRef.current.type = type; };
 
   const handleSubmit = async e => {

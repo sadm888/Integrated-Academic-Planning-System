@@ -1663,8 +1663,16 @@ function Chat({ user }) {
                   maxWidth: '65%',
                 }}>
                   {!isMe && (
-                    <span style={{ fontSize: '12px', color: '#667eea', fontWeight: 600, marginBottom: '3px', marginLeft: '4px' }}>
+                    <span style={{ fontSize: '12px', color: '#667eea', fontWeight: 600, marginBottom: '3px', marginLeft: '4px', display: 'flex', alignItems: 'center', gap: '5px' }}>
                       {msg.full_name || msg.username}
+                      {semester?.cr_ids?.includes(msg.user_id) && (
+                        <span style={{
+                          fontSize: '10px', fontWeight: 700, color: '#fff',
+                          background: '#7c3aed', borderRadius: '4px',
+                          padding: '1px 5px', letterSpacing: '0.03em',
+                          lineHeight: 1.4,
+                        }}>CR</span>
+                      )}
                     </span>
                   )}
                   <div style={{ position: 'relative' }}>

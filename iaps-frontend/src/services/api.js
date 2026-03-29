@@ -34,7 +34,10 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    // Only force-logout on 401 when the user is already logged in (has a token).
+    // Never redirect on auth endpoints like /login or /signup — those legitimately return 401.
+    const isAuthEndpoint = error.config?.url?.includes('/auth/');
+    if (error.response?.status === 401 && !isAuthEndpoint && localStorage.getItem('token')) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';
@@ -109,6 +112,7 @@ export const subjectAPI = {
   list: (semesterId) => api.get(`/subject/semester/${semesterId}/list`),
   delete: (subjectId) => api.delete(`/subject/${subjectId}`),
   update: (subjectId, data) => api.patch(`/subject/${subjectId}`, data),
+  syncFromTimetable: (semesterId) => api.post(`/subject/semester/${semesterId}/sync-from-timetable`),
 };
 
 // Marks endpoints
@@ -345,6 +349,56 @@ export const timetableAPI = {
     api.get(`/timetable/semester/${semesterId}/academic-calendar`),
   pushAcademicCalendar: (semesterId) =>
     api.post(`/timetable/semester/${semesterId}/academic-calendar/push-to-calendar`),
+};
+
+export const attendanceAPI = {
+  getSettings: (semesterId) =>
+    api.get(`/attendance/semester/${semesterId}/settings`),
+  updateSettings: (semesterId, data) =>
+    api.patch(`/attendance/semester/${semesterId}/settings`, data),
+  getSubjectConfigs: (semesterId) =>
+    api.get(`/attendance/semester/${semesterId}/subject-configs`),
+  updateSubjectConfig: (semesterId, subject, data) =>
+    api.patch(`/attendance/semester/${semesterId}/subject/${encodeURIComponent(subject)}/config`, data),
+  getSummary: (semesterId) =>
+    api.get(`/attendance/semester/${semesterId}/summary`),
+  getSessions: (semesterId, date) =>
+    api.get(`/attendance/semester/${semesterId}/sessions`, { params: date ? { date } : {} }),
+  markSession: (semesterId, sessionId, status) =>
+    api.patch(`/attendance/semester/${semesterId}/sessions/${sessionId}`, { status }),
+  markSelf: (semesterId, sessionId, status) =>
+    api.post(`/attendance/semester/${semesterId}/mark`, { session_id: sessionId, status }),
+  changeMark: (semesterId, sessionId, status) =>
+    api.put(`/attendance/semester/${semesterId}/mark/${sessionId}`, { status }),
+  getHistory: (semesterId, subject) =>
+    api.get(`/attendance/semester/${semesterId}/history/${encodeURIComponent(subject)}`),
+  getCrRoll: (semesterId, sessionId) =>
+    api.get(`/attendance/semester/${semesterId}/cr-roll/${sessionId}`),
+  getCrSubjectSummary: (semesterId, subject) =>
+    api.get(`/attendance/semester/${semesterId}/subject/${encodeURIComponent(subject)}/cr-summary`),
+  crMarkStudent: (semesterId, sessionId, studentId, status) =>
+    api.post(`/attendance/semester/${semesterId}/cr-roll/${sessionId}/${studentId}`, { status }),
+  generate: (semesterId) =>
+    api.post(`/attendance/semester/${semesterId}/generate`),
+  getDefaulters: (semesterId, params = {}) =>
+    api.get(`/attendance/semester/${semesterId}/defaulters`, { params }),
+  exportSubjectExcel: (semesterId, subject) =>
+    fileUrl(`attendance/semester/${semesterId}/subject/${encodeURIComponent(subject)}/export/excel`),
+  exportAllExcel: (semesterId) =>
+    fileUrl(`attendance/semester/${semesterId}/export/excel`),
+  exportDefaultersExcel: (semesterId) =>
+    fileUrl(`attendance/semester/${semesterId}/defaulters/export/excel`),
+  uploadAttachment: (semesterId, sessionId, file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post(`/attendance/semester/${semesterId}/record/${sessionId}/attachment`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  deleteAttachment: (semesterId, sessionId) =>
+    api.delete(`/attendance/semester/${semesterId}/record/${sessionId}/attachment`),
+  proofUrl: (storedName) => fileUrl(`attendance/proof/${storedName}`),
+  getMyProofs: () => api.get('/attendance/my-proofs'),
 };
 
 export default api;

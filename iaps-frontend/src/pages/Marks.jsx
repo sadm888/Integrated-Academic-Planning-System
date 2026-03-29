@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import SemesterSubnav from '../components/SemesterSubnav';
 import { semesterAPI } from '../services/api';
 import '../styles/Classroom.css';
 import { BookOpen, ChevronDown, ChevronRight } from 'lucide-react';
@@ -44,15 +45,7 @@ function Marks({ user }) {
         </p>
       </div>
 
-      {/* Subnav */}
-      <div className="page-subnav">
-        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}`}>Dashboard</Link>
-        <button className="page-subnav-item" onClick={() => navigate(`/classroom/${classroomId}/semester/${semesterId}/chat`)}>Chat</button>
-        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/files`}>Resources</Link>
-        <Link className="page-subnav-item accent" to={`/classroom/${classroomId}/semester/${semesterId}/marks`}>Marks</Link>
-        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/timetable`}>Timetable</Link>
-        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/academic-calendar`}>Academic Calendar</Link>
-      </div>
+      <SemesterSubnav active="marks" classroomId={classroomId} semesterId={semesterId} />
 
       {subjects.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-secondary)' }}>

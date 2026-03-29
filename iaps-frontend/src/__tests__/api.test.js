@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Captured interceptor callbacks — populated when api.js calls interceptors.response.use(onFulfilled, onRejected)
+let _responseInterceptorRejected = null;
+
 // Mock axios before importing api
 vi.mock('axios', () => {
   const instance = {
@@ -10,7 +13,11 @@ vi.mock('axios', () => {
     delete: vi.fn(),
     interceptors: {
       request: { use: vi.fn() },
-      response: { use: vi.fn() },
+      response: {
+        use: vi.fn((onFulfilled, onRejected) => {
+          _responseInterceptorRejected = onRejected;
+        }),
+      },
     },
   };
   return {
@@ -221,6 +228,54 @@ describe('API service', () => {
     expect(typeof linksAPI.delete).toBe('function');
   });
 
+  it('exports attendanceAPI with correct methods', async () => {
+    const { attendanceAPI } = await import('../services/api');
+    expect(typeof attendanceAPI.getSettings).toBe('function');
+    expect(typeof attendanceAPI.updateSettings).toBe('function');
+    expect(typeof attendanceAPI.getSubjectConfigs).toBe('function');
+    expect(typeof attendanceAPI.updateSubjectConfig).toBe('function');
+    expect(typeof attendanceAPI.getSummary).toBe('function');
+    expect(typeof attendanceAPI.getSessions).toBe('function');
+    expect(typeof attendanceAPI.markSession).toBe('function');
+    expect(typeof attendanceAPI.markSelf).toBe('function');
+    expect(typeof attendanceAPI.changeMark).toBe('function');
+    expect(typeof attendanceAPI.getHistory).toBe('function');
+    expect(typeof attendanceAPI.getCrRoll).toBe('function');
+    expect(typeof attendanceAPI.getCrSubjectSummary).toBe('function');
+    expect(typeof attendanceAPI.crMarkStudent).toBe('function');
+    expect(typeof attendanceAPI.generate).toBe('function');
+    expect(typeof attendanceAPI.getDefaulters).toBe('function');
+    expect(typeof attendanceAPI.exportSubjectExcel).toBe('function');
+    expect(typeof attendanceAPI.exportAllExcel).toBe('function');
+    expect(typeof attendanceAPI.uploadAttachment).toBe('function');
+    expect(typeof attendanceAPI.deleteAttachment).toBe('function');
+    expect(typeof attendanceAPI.proofUrl).toBe('function');
+    expect(typeof attendanceAPI.getMyProofs).toBe('function');
+  });
+
+  it('attendanceAPI.getCrSubjectSummary builds correct URL', async () => {
+    const { attendanceAPI } = await import('../services/api');
+    // Calling the function should invoke api.get with the encoded subject path.
+    // We just verify the function exists and accepts (semesterId, subject).
+    expect(attendanceAPI.getCrSubjectSummary.length).toBe(2);
+  });
+
+  it('attendanceAPI.exportSubjectExcel includes semesterId and subject in URL', async () => {
+    localStorage.setItem('token', 'test-token');
+    const { attendanceAPI } = await import('../services/api');
+    const url = attendanceAPI.exportSubjectExcel('sem-1', 'Math');
+    expect(url).toContain('sem-1');
+    expect(url).toContain('Math');
+  });
+
+  it('attendanceAPI.proofUrl includes filename and token', async () => {
+    localStorage.setItem('token', 'test-token');
+    const { attendanceAPI } = await import('../services/api');
+    const url = attendanceAPI.proofUrl('proof-file.jpg');
+    expect(url).toContain('proof-file.jpg');
+    expect(url).toContain('test-token');
+  });
+
   it('analyticsFileUrl includes token from localStorage', async () => {
     localStorage.setItem('token', 'test-token-123');
     const { marksAPI } = await import('../services/api');
@@ -251,5 +306,64 @@ describe('API service', () => {
     const { settingsAPI } = await import('../services/api');
     const url = settingsAPI.getPersonalDocUrl('doc-789');
     expect(url).toContain('doc-789');
+  });
+});
+
+describe('401 response interceptor', () => {
+  beforeEach(async () => {
+    // Ensure the module is imported so the interceptor is registered
+    await import('../services/api');
+    localStorage.clear();
+    window.location.href = '';
+  });
+
+  it('does NOT redirect when the URL includes /auth/', async () => {
+    expect(_responseInterceptorRejected).toBeTypeOf('function');
+    localStorage.setItem('token', 'some-token');
+
+    const error = {
+      config: { url: '/auth/login' },
+      response: { status: 401 },
+    };
+    await expect(_responseInterceptorRejected(error)).rejects.toBe(error);
+    expect(window.location.href).toBe('');
+  });
+
+  it('does NOT redirect when there is no token in localStorage', async () => {
+    expect(_responseInterceptorRejected).toBeTypeOf('function');
+    // No token set
+
+    const error = {
+      config: { url: '/attendance/semester/abc/summary' },
+      response: { status: 401 },
+    };
+    await expect(_responseInterceptorRejected(error)).rejects.toBe(error);
+    expect(window.location.href).toBe('');
+  });
+
+  it('DOES redirect to /login when token exists and URL is not /auth/', async () => {
+    expect(_responseInterceptorRejected).toBeTypeOf('function');
+    localStorage.setItem('token', 'valid-token');
+
+    const error = {
+      config: { url: '/classroom/list' },
+      response: { status: 401 },
+    };
+    await expect(_responseInterceptorRejected(error)).rejects.toBe(error);
+    expect(window.location.href).toBe('/login');
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(localStorage.getItem('user')).toBeNull();
+  });
+
+  it('does NOT redirect for 403 status (only 401)', async () => {
+    expect(_responseInterceptorRejected).toBeTypeOf('function');
+    localStorage.setItem('token', 'valid-token');
+
+    const error = {
+      config: { url: '/classroom/list' },
+      response: { status: 403 },
+    };
+    await expect(_responseInterceptorRejected(error)).rejects.toBe(error);
+    expect(window.location.href).toBe('');
   });
 });

@@ -9,7 +9,17 @@ const dotSize = (size) => Math.max(8, Math.round(size * 0.28));
 // dotBg: background colour of the surface the avatar sits on (for the dot border halo)
 // dotColor: override the dot colour entirely (e.g. '#667eea' for hidden/invisible mode)
 function Avatar({ user, size = 36, showOnline = null, dotBg = 'var(--card-bg)', dotColor = null }) {
+  const [imgFailed, setImgFailed] = React.useState(false);
   const str = user?.username || user?.email || '';
+  // Normalise the user id across different API response shapes (must be derived
+  // before the useEffect dependency below).
+  const userId = user?.id || user?.user_id || user?._id;
+
+  // Reset the failed-image flag whenever the user identity changes so that a
+  // reused Avatar component correctly attempts to load the new user's picture.
+  React.useEffect(() => {
+    setImgFailed(false);
+  }, [userId]);
   const hash = str.split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0);
   const colorIdx = Math.abs(hash) % COLORS.length;
   const letter = ((user?.username || user?.email || '?')[0] || '?').toUpperCase();
@@ -27,13 +37,14 @@ function Avatar({ user, size = 36, showOnline = null, dotBg = 'var(--card-bg)', 
     }} />
   ) : null;
 
-  if (user?.profile_picture) {
+  if (user?.profile_picture && userId && !imgFailed) {
     return (
       <span style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
         <img
-          src={settingsAPI.getAvatarUrl(user.id)}
+          src={settingsAPI.getAvatarUrl(userId)}
           alt={user.username}
-          style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover' }}
+          onError={() => setImgFailed(true)}
+          style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', display: 'block' }}
         />
         {dot}
       </span>

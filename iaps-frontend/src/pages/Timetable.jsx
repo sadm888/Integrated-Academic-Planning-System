@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Upload, Plus, X, Edit2, AlertTriangle, CheckCircle, RefreshCw, Calendar, ChevronLeft, ChevronRight, Printer, BookOpen, FileDown, GraduationCap } from 'lucide-react';
 import { timetableAPI, semesterAPI } from '../services/api';
+import SemesterSubnav from '../components/SemesterSubnav';
 import '../styles/Classroom.css';
 
 // ── Color helpers ─────────────────────────────────────────────────────────────
@@ -49,10 +50,13 @@ const STATUS_BADGE = {
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function CellChip({ cell, slot, day, onClick, isCr }) {
-  const permCancelled = cell.type === 'Cancelled';
-  const c = cellColors(cell.type);
-  const isClass = cell.subject && !['Free', 'Lunch', 'Library', 'Break', 'Cancelled'].includes(cell.type);
-  const badge = permCancelled
+  // type='Cancelled' in the base grid means that slot is permanently empty (never has class).
+  // Treat it as 'Free' visually — temporary cancellations come through cell.status === 'cancelled'.
+  const displayType = cell.type === 'Cancelled' ? 'Free' : cell.type;
+  const isTempCancelled = cell.status === 'cancelled';
+  const c = cellColors(displayType);
+  const isClass = cell.subject && !['Free', 'Lunch', 'Library', 'Break', 'Cancelled'].includes(displayType);
+  const badge = isTempCancelled
     ? { bg: 'var(--cell-cancel-bg)', text: 'var(--cell-cancel-text)', label: 'CANCELLED' }
     : STATUS_BADGE[cell.status];
 
@@ -60,8 +64,8 @@ function CellChip({ cell, slot, day, onClick, isCr }) {
     <div
       onClick={() => onClick && onClick(day, slot, cell)}
       style={{
-        background: (cell.status === 'cancelled' || permCancelled) ? 'var(--cell-cancel-bg)' : c.bg,
-        border: `1.5px solid ${(cell.status === 'cancelled' || permCancelled) ? 'var(--cell-cancel-border)' : c.border}`,
+        background: isTempCancelled ? 'var(--cell-cancel-bg)' : c.bg,
+        border: `1.5px solid ${isTempCancelled ? 'var(--cell-cancel-border)' : c.border}`,
         borderRadius: '6px',
         padding: '6px 7px',
         fontSize: '12px',
@@ -73,7 +77,7 @@ function CellChip({ cell, slot, day, onClick, isCr }) {
         justifyContent: 'center',
         position: 'relative',
         transition: 'box-shadow 0.15s',
-        opacity: (cell.status === 'cancelled' || permCancelled) ? 0.7 : 1,
+        opacity: isTempCancelled ? 0.7 : 1,
       }}
     >
       {badge && (
@@ -84,9 +88,12 @@ function CellChip({ cell, slot, day, onClick, isCr }) {
       )}
       {cell.subject ? (
         <>
-          <span style={{ fontWeight: 700, color: c.text, lineHeight: 1.2, fontSize: '12px', textDecoration: (cell.status === 'cancelled' || permCancelled) ? 'line-through' : 'none' }}>
-            {cell.subject}
+          <span style={{ fontWeight: 700, color: c.text, lineHeight: 1.2, fontSize: '12px', textDecoration: isTempCancelled ? 'line-through' : 'none' }}>
+            {cell.subject_name || cell.subject}
           </span>
+          {cell.subject_name && (
+            <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>{cell.subject}</span>
+          )}
           {cell.teacher && (
             <span style={{ fontSize: '11px', color: 'var(--text-primary)', marginTop: '2px' }}>{cell.teacher}</span>
           )}
@@ -105,7 +112,7 @@ function CellChip({ cell, slot, day, onClick, isCr }) {
         </>
       ) : (
         <span style={{ color: 'var(--text-secondary)', fontSize: '11px', fontWeight: 500 }}>
-          {cell.type || 'Free'}
+          {displayType || 'Free'}
         </span>
       )}
       {isCr && isClass && (
@@ -338,6 +345,7 @@ function OverrideModal({ day, slot, cell, onClose, onSave, onDeleteOverride, sel
 function SlotEditModal({ day, slot, cell, onClose, onSave, onMove, editGrid, days, timeSlots }) {
   const [form, setForm] = useState({
     subject: cell?.subject || '',
+    subject_name: cell?.subject_name || '',
     teacher: cell?.teacher || '',
     room: cell?.room || '',
     type: cell?.type || 'Free',
@@ -432,16 +440,22 @@ function SlotEditModal({ day, slot, cell, onClose, onSave, onMove, editGrid, day
             </div>
           </div>
 
-          {/* Subject + Teacher row */}
+          {/* Subject code + name row */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
             <div>
-              <label style={labelStyle}>Subject</label>
-              <input style={fieldStyle} value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} placeholder="e.g. Maths" />
+              <label style={labelStyle}>Subject Code</label>
+              <input style={fieldStyle} value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} placeholder="e.g. IT251" />
             </div>
             <div>
-              <label style={labelStyle}>Teacher</label>
-              <input style={fieldStyle} value={form.teacher} onChange={e => setForm({ ...form, teacher: e.target.value })} placeholder="Faculty name" />
+              <label style={labelStyle}>Subject Name <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(optional)</span></label>
+              <input style={fieldStyle} value={form.subject_name} onChange={e => setForm({ ...form, subject_name: e.target.value })} placeholder="e.g. Data Structures" />
             </div>
+          </div>
+
+          {/* Teacher row */}
+          <div style={{ marginBottom: '12px' }}>
+            <label style={labelStyle}>Teacher</label>
+            <input style={fieldStyle} value={form.teacher} onChange={e => setForm({ ...form, teacher: e.target.value })} placeholder="Faculty name" />
           </div>
 
           {/* Room + Link row */}
@@ -1575,14 +1589,7 @@ export default function Timetable({ user }) {
             </p>
           </>}
         </div>
-        <div className="page-subnav">
-          <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}`}>Dashboard</Link>
-          <button className="page-subnav-item" onClick={() => navigate(`/classroom/${classroomId}/semester/${semesterId}/chat`)}>Chat</button>
-          <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/files`}>Resources</Link>
-          <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/marks`}>Marks</Link>
-          <Link className="page-subnav-item accent" to={`/classroom/${classroomId}/semester/${semesterId}/timetable`}>Timetable</Link>
-          <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/academic-calendar`}>Academic Calendar</Link>
-        </div>
+        <SemesterSubnav active="timetable" classroomId={classroomId} semesterId={semesterId} />
         <div style={{ textAlign: 'center', padding: '60px 20px' }}>
           <Calendar size={64} strokeWidth={1.25} color="var(--primary-color)" style={{ marginBottom: '20px' }} />
           <h2 style={{ color: 'var(--text-primary)', marginBottom: '8px' }}>No timetable yet</h2>
@@ -1646,14 +1653,21 @@ export default function Timetable({ user }) {
 
   return (
     <div className="classroom-container">
-      {/* Sub-nav — same pattern as SemesterDetail */}
-      <div className="page-subnav">
-        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}`}>Dashboard</Link>
-        <button className="page-subnav-item" onClick={() => navigate(`/classroom/${classroomId}/semester/${semesterId}/chat`)}>Chat</button>
-        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/files`}>Resources</Link>
-        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/marks`}>Marks</Link>
-        <Link className="page-subnav-item accent" to={`/classroom/${classroomId}/semester/${semesterId}/timetable`}>Timetable</Link>
-        <Link className="page-subnav-item" to={`/classroom/${classroomId}/semester/${semesterId}/academic-calendar`}>Academic Calendar</Link>
+      <div style={{ marginBottom: '4px' }}>
+        <button onClick={() => navigate(`/classroom/${classroomId}`)} style={{
+          background: 'none', border: 'none', color: 'var(--primary-color)',
+          cursor: 'pointer', fontSize: '13px', marginBottom: '10px', padding: 0,
+        }}>
+          &larr; Back to Classroom
+        </button>
+        {semester && <>
+          <h1 style={{ margin: 0 }}>{semester.name}</h1>
+          <p style={{ color: 'var(--text-secondary)', margin: '4px 0 0', fontSize: '14px' }}>
+            {semester.type} · {semester.year}{semester.session && ` · ${semester.session}`}
+          </p>
+        </>}
+      </div>
+      <SemesterSubnav active="timetable" classroomId={classroomId} semesterId={semesterId}>
         <div className="page-subnav-spacer" />
         <button
           className="page-subnav-item"
@@ -1663,7 +1677,7 @@ export default function Timetable({ user }) {
         >
           <Printer size={13} /> Print
         </button>
-      </div>
+      </SemesterSubnav>
 
       {error && <div className="error-message" style={{ marginBottom: '12px' }}>{error}</div>}
       {success && <div className="success-message" style={{ marginBottom: '12px' }}>{success}</div>}

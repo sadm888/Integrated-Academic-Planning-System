@@ -54,6 +54,7 @@ function ProfileSection({ user, onProfileUpdate }) {
     fullName: user.fullName || '',
     college: user.college || '',
     department: user.department || '',
+    roll_number: user.roll_number || '',
     phone: user.phone || '',
     phone_public: user.phone_public || false,
     bio: user.bio || '',
@@ -71,6 +72,7 @@ function ProfileSection({ user, onProfileUpdate }) {
       fullName: user.fullName || '',
       college: user.college || '',
       department: user.department || '',
+      roll_number: user.roll_number || '',
       phone: user.phone || '',
       phone_public: user.phone_public || false,
       bio: user.bio || '',
@@ -186,6 +188,7 @@ function ProfileSection({ user, onProfileUpdate }) {
           { label: 'Full Name', key: 'fullName' },
           { label: 'College', key: 'college' },
           { label: 'Department', key: 'department' },
+          { label: 'Roll Number', key: 'roll_number' },
         ].map(({ label, key }) => (
           <div key={key} style={fieldGroupStyle}>
             <label style={labelStyle}>{label}</label>

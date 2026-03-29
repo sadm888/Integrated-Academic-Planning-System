@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 from bson import ObjectId
 import logging
 
@@ -7,6 +7,36 @@ from middleware import token_required, is_member_of_classroom, is_cr_of
 
 semester_bp = Blueprint('semester', __name__, url_prefix='/api/semester')
 logger = logging.getLogger(__name__)
+
+
+def _archive_cr_periods(db, semester_id):
+    """Archive all active CR attendance periods for a semester.
+    Called when a CR steps down so all CR-mode subjects are frozen as of today.
+    The new CR decides whether to start fresh CR periods.
+    """
+    today = date.today().isoformat()
+    configs = list(db.subject_attendance_config.find({
+        'semester_id': semester_id,
+        'tracking_mode': 'cr',
+    }))
+    for cfg in configs:
+        archived_entry = {
+            'from': cfg.get('cr_period_start'),
+            'to': today,
+            'exported_at': cfg.get('last_exported_at'),
+            'handoff': True,
+        }
+        db.subject_attendance_config.update_one(
+            {'_id': cfg['_id']},
+            {
+                '$set': {
+                    'tracking_mode': 'off',
+                    'cr_period_start': None,
+                    'updated_at': datetime.now(timezone.utc),
+                },
+                '$push': {'archived_periods': archived_entry},
+            }
+        )
 
 
 
@@ -124,7 +154,7 @@ def get_semester(semester_id):
                 {'personal': {'$ne': True}},
                 {'personal': True, 'created_by': user_id},
             ]
-        }))
+        }).sort('name', 1))
         subjects_data = [
             {
                 'id': str(s['_id']),
@@ -135,6 +165,7 @@ def get_semester(semester_id):
                 'details': s.get('details', ''),
                 'personal': s.get('personal', False),
                 'created_by': s.get('created_by', ''),
+                'resources_visible': s.get('resources_visible', True),
             }
             for s in subjects
         ]
@@ -333,6 +364,9 @@ def remove_cr(semester_id):
             {'$pull': {'cr_ids': target_cr_id}}
         )
 
+        # Archive all active CR attendance periods — fresh start for the remaining CRs
+        _archive_cr_periods(db, semester_id)
+
         return jsonify({'message': 'CR removed successfully'}), 200
 
     except Exception as e:
@@ -482,6 +516,8 @@ def accept_cr_nomination(semester_id):
                 {'_id': ObjectId(semester_id)},
                 {'$pull': {'cr_ids': nominator_id}}
             )
+            # Archive all active CR attendance periods — new CR starts fresh
+            _archive_cr_periods(db, semester_id)
 
         db.cr_nominations.delete_one({'_id': nomination['_id']})
 

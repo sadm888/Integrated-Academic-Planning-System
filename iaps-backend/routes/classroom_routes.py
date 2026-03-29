@@ -338,7 +338,7 @@ def get_classroom(classroom_id):
             sem_id = str(sem['_id'])
 
             # Fetch subjects for this semester
-            subjects = list(db.subjects.find({'semester_id': sem_id}).sort('created_at', 1))
+            subjects = list(db.subjects.find({'semester_id': sem_id}).sort('name', 1))
             formatted_subjects = [{
                 'id': str(s['_id']),
                 'name': s['name'],

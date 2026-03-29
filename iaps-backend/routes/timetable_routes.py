@@ -63,6 +63,145 @@ def _serialize_override(doc):
     }
 
 
+_TT_BLOCKED = {'Free', 'Lunch', 'Library', 'Break', 'Holiday', 'Cancelled', 'Exam', ''}
+
+
+def _sync_subjects_from_grid(db, semester_id, classroom_id, grid, user_id):
+    """Create or re-link Subject records from timetable grid strings."""
+    import re
+    from datetime import datetime, timezone
+
+    tt_names = set()
+    for day_slots in grid.values():
+        for cell in day_slots.values():
+            name = (cell.get('subject') or '').strip()
+            if name and cell.get('type', 'Free') not in _TT_BLOCKED:
+                tt_names.add(name)
+
+    for tt_name in tt_names:
+        escaped = re.escape(tt_name)
+        existing = db.subjects.find_one({
+            'semester_id': semester_id,
+            'personal': {'$ne': True},
+            '$or': [
+                {'timetable_name': {'$regex': f'^{escaped}$', '$options': 'i'}},
+                {'name': {'$regex': f'^{escaped}$', '$options': 'i'}},
+            ]
+        })
+        if existing:
+            if not existing.get('timetable_name'):
+                db.subjects.update_one({'_id': existing['_id']}, {'$set': {'timetable_name': tt_name}})
+        else:
+            db.subjects.insert_one({
+                'classroom_id': classroom_id,
+                'semester_id': semester_id,
+                'name': tt_name,
+                'code': '',
+                'credits': '',
+                'faculties': [],
+                'details': '',
+                'personal': False,
+                'timetable_name': tt_name,
+                'created_by': user_id,
+                'created_at': datetime.now(timezone.utc),
+            })
+
+
+def _cascade_slot_changes(db, semester_id, changed_cells, old_grid, new_grid):
+    """
+    When timetable slots change:
+    1. Update pending attendance sessions for those slots to the new subject/type.
+    2. When a subject name changes (old no longer in grid, new appears), update
+       the Subject record in-place so marks/resources stay linked via the same _id.
+    """
+    import re
+    from bson import ObjectId
+
+    # Update attendance sessions for each changed slot
+    for day, slot, new_cell in changed_cells:
+        new_subj = (new_cell.get('subject') or '').strip()
+        new_type = new_cell.get('type', 'Free')
+        if not new_subj or new_type in _TT_BLOCKED:
+            # Slot is now free — cancel any pending sessions for this slot
+            db.attendance_sessions.update_many(
+                {'semester_id': semester_id, 'day': day, 'slot': slot, 'status': 'pending'},
+                {'$set': {'status': 'cancelled'}}
+            )
+        else:
+            # Update pending sessions to the new subject/type
+            db.attendance_sessions.update_many(
+                {'semester_id': semester_id, 'day': day, 'slot': slot,
+                 'status': {'$in': ['pending']}},
+                {'$set': {'subject': new_subj, 'type': new_type}}
+            )
+
+    # Detect renamed subjects: names removed from grid vs names added to grid
+    old_names = set()
+    for day_slots in old_grid.values():
+        for cell in day_slots.values():
+            n = (cell.get('subject') or '').strip()
+            if n and cell.get('type', 'Free') not in _TT_BLOCKED:
+                old_names.add(n)
+
+    new_names = set()
+    for day_slots in new_grid.values():
+        for cell in day_slots.values():
+            n = (cell.get('subject') or '').strip()
+            if n and cell.get('type', 'Free') not in _TT_BLOCKED:
+                new_names.add(n)
+
+    removed = old_names - new_names   # no longer in timetable
+    added   = new_names - old_names   # newly appeared
+
+    # For each removed name, check if there's an added name that has no existing Subject
+    # record yet — if so, rename the Subject in-place (preserving _id → marks/resources follow)
+    for old_name in removed:
+        old_escaped = re.escape(old_name)
+        old_subj = db.subjects.find_one({
+            'semester_id': semester_id,
+            'personal': {'$ne': True},
+            '$or': [
+                {'timetable_name': {'$regex': f'^{old_escaped}$', '$options': 'i'}},
+                {'name': {'$regex': f'^{old_escaped}$', '$options': 'i'}},
+            ]
+        })
+        if not old_subj:
+            continue
+
+        # Find an added name that has no Subject record yet
+        for new_name in list(added):
+            new_escaped = re.escape(new_name)
+            new_exists = db.subjects.find_one({
+                'semester_id': semester_id,
+                'personal': {'$ne': True},
+                '$or': [
+                    {'timetable_name': {'$regex': f'^{new_escaped}$', '$options': 'i'}},
+                    {'name': {'$regex': f'^{new_escaped}$', '$options': 'i'}},
+                ]
+            })
+            if not new_exists:
+                # Rename old Subject in-place — all marks/resources keep their subject_id
+                db.subjects.update_one(
+                    {'_id': old_subj['_id']},
+                    {'$set': {'name': new_name, 'timetable_name': new_name}}
+                )
+                # Also update attendance records that reference the old name
+                db.attendance_sessions.update_many(
+                    {'semester_id': semester_id, 'subject': old_name},
+                    {'$set': {'subject': new_name}}
+                )
+                db.attendance_records.update_many(
+                    {'semester_id': semester_id, 'subject': old_name},
+                    {'$set': {'subject': new_name}}
+                )
+                db.subject_attendance_config.update_many(
+                    {'semester_id': semester_id, 'subject': old_name},
+                    {'$set': {'subject': new_name}}
+                )
+                added.discard(new_name)
+                break
+
+
 def _apply_overrides_to_week(grid, days, time_slots, overrides, week_start_date):
     """
     Build a week view by merging base grid with overrides.
@@ -324,6 +463,12 @@ def save_timetable(semester_id):
                     except Exception as gcal_err:
                         logger.warning(f"GCal resync failed for user {pushed_user_id}: {gcal_err}")
 
+                # Update pending attendance sessions and subject records for changed slots
+                try:
+                    _cascade_slot_changes(db, semester_id, changed_cells, old_grid, grid)
+                except Exception as casc_err:
+                    logger.warning(f"Slot cascade failed: {casc_err}")
+
         else:
             result = db.timetables.insert_one({
                 'semester_id': semester_id,
@@ -337,6 +482,27 @@ def save_timetable(semester_id):
                 'updated_at': now,
             })
             doc = db.timetables.find_one({'_id': result.inserted_id})
+
+        # Regenerate attendance sessions from updated timetable
+        try:
+            from routes.attendance_routes import generate_sessions
+            import re as _re
+            _, cal = None, db.academic_calendars.find_one({'semester_id': semester_id})
+            today_str = date.today().isoformat()
+            sem_start = (cal or {}).get('semester_start', today_str)
+            sem_end = (cal or {}).get('semester_end', today_str)
+            to_str = min(today_str, sem_end) if sem_end else today_str
+            generate_sessions(db, semester_id, str(semester['classroom_id']), sem_start, to_str)
+        except Exception as att_err:
+            logger.warning(f"Attendance session regeneration failed: {att_err}")
+
+        # Sync Subject records from timetable grid
+        try:
+            import re as _re
+            from datetime import datetime as _dt, timezone as _tz
+            _sync_subjects_from_grid(db, semester_id, str(semester['classroom_id']), grid, user_id)
+        except Exception as subj_err:
+            logger.warning(f"Subject sync from timetable failed: {subj_err}")
 
         return jsonify({'timetable': _serialize_timetable(doc)}), 200
 

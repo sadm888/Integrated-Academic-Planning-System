@@ -74,6 +74,34 @@ class Database:
                 name="chat_read_status_user_classroom"
             )
 
+            # attendance_sessions — list by semester + date, dedup by date+slot
+            self._db.attendance_sessions.create_index(
+                [("semester_id", ASCENDING), ("date", ASCENDING), ("slot", ASCENDING)],
+                name="attendance_sessions_semester_date_slot"
+            )
+            self._db.attendance_sessions.create_index(
+                [("semester_id", ASCENDING), ("subject", ASCENDING), ("status", ASCENDING)],
+                name="attendance_sessions_semester_subject_status"
+            )
+
+            # attendance_records — one per student per session
+            self._db.attendance_records.create_index(
+                [("session_id", ASCENDING), ("student_id", ASCENDING)],
+                unique=True,
+                name="attendance_records_session_student"
+            )
+            self._db.attendance_records.create_index(
+                [("semester_id", ASCENDING), ("student_id", ASCENDING)],
+                name="attendance_records_semester_student"
+            )
+
+            # attendance_settings — one per semester
+            self._db.attendance_settings.create_index(
+                [("semester_id", ASCENDING)],
+                unique=True,
+                name="attendance_settings_semester"
+            )
+
             logger.info("Database indexes checked/created successfully")
         except Exception as e:
             logger.warning(f"Error creating indexes: {e}")

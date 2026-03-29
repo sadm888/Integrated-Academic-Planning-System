@@ -1,17 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { academicAPI, chatAPI, BACKEND_URL } from '../services/api';
+import { academicAPI, chatAPI, attendanceAPI, BACKEND_URL } from '../services/api';
 import { FileTypeIcon, sizeLabel } from '../utils/fileUtils';
 
 function Files({ user }) {
   const [resources, setResources] = useState([]);
+  const [proofs, setProofs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    academicAPI.getAllResources()
-      .then(res => setResources(res.data.resources || []))
+    Promise.all([
+      academicAPI.getAllResources(),
+      attendanceAPI.getMyProofs(),
+    ])
+      .then(([resRes, proofsRes]) => {
+        setResources(resRes.data.resources || []);
+        setProofs(proofsRes.data.proofs || []);
+      })
       .catch(() => setError('Failed to load files'))
       .finally(() => setLoading(false));
   }, []);
@@ -68,12 +75,53 @@ function Files({ user }) {
         <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '40px 0' }}>Loading…</div>
       ) : error ? (
         <div style={{ color: '#dc2626', padding: '12px 16px', background: '#fef2f2', borderRadius: '8px' }}>{error}</div>
-      ) : filtered.length === 0 ? (
+      ) : filtered.length === 0 && proofs.length === 0 ? (
         <div style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '40px 0', fontSize: '15px' }}>
           {search ? 'No files match your search.' : 'No files uploaded yet.'}
         </div>
       ) : (
-        Object.entries(groups).map(([semKey, { meta, subjects }]) => (
+        <>
+        {proofs.length > 0 && (
+          <div style={{ marginBottom: '36px' }}>
+            <div style={{ fontWeight: 800, fontSize: '17px', color: 'var(--text-primary)', marginBottom: '14px' }}>
+              My Attendance Proofs
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {proofs
+                .filter(p => !search || p.original_name?.toLowerCase().includes(search.toLowerCase()) || p.subject?.toLowerCase().includes(search.toLowerCase()))
+                .map((p, i) => (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  padding: '8px 12px', borderRadius: '8px',
+                  background: 'var(--card-bg)', border: '1px solid var(--border-color)',
+                }}>
+                  <FileTypeIcon mime={null} size={18} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <a
+                      href={attendanceAPI.proofUrl(p.stored_name)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)',
+                        textDecoration: 'none', display: 'block',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {p.original_name}
+                    </a>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '1px' }}>
+                      {p.subject} · {p.date}
+                      <span style={{ marginLeft: '6px', fontWeight: 600, color: p.status === 'leave' ? 'var(--info-text)' : 'var(--warning-text)' }}>
+                        {p.status === 'leave' ? 'Medical Leave' : 'College Work'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {Object.entries(groups).map(([semKey, { meta, subjects }]) => (
           <div key={semKey} style={{ marginBottom: '36px' }}>
             {/* Semester header */}
             <div style={{
@@ -175,7 +223,8 @@ function Files({ user }) {
               </div>
             ))}
           </div>
-        ))
+        ))}
+        </>
       )}
     </div>
   );

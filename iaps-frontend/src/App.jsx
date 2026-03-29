@@ -15,6 +15,7 @@ import Timetable from './pages/Timetable';
 import AcademicCalendar from './pages/AcademicCalendar';
 import Marks from './pages/Marks';
 import MarksDetail from './pages/MarksDetail';
+import Attendance from './pages/Attendance';
 import Navbar from './components/Navbar';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
@@ -461,6 +462,16 @@ function App() {
           element={
             user ? (
               <Timetable user={user} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/classroom/:classroomId/semester/:semesterId/attendance"
+          element={
+            user ? (
+              <Attendance user={user} />
             ) : (
               <Navigate to="/login" replace />
             )

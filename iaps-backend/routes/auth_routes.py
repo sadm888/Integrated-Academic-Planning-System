@@ -160,18 +160,19 @@ def login():
         device = _parse_device(ua_string)
         now = datetime.now(timezone.utc)
 
-        if not user or 'password' not in user or not check_password_hash(user.get('password', ''), password):
-            # Log failed attempt (only if we know the user exists so we can associate user_id)
-            if user:
-                db.login_activity.insert_one({
-                    'user_id': str(user['_id']),
-                    'ip': ip,
-                    'device': device,
-                    'user_agent': ua_string,
-                    'status': 'failed',
-                    'logged_in_at': now,
-                })
-            return jsonify({'error': 'Invalid credentials'}), 401
+        if not user or 'password' not in user:
+            return jsonify({'error': 'No account found with that email or username'}), 401
+
+        if not check_password_hash(user.get('password', ''), password):
+            db.login_activity.insert_one({
+                'user_id': str(user['_id']),
+                'ip': ip,
+                'device': device,
+                'user_agent': ua_string,
+                'status': 'failed',
+                'logged_in_at': now,
+            })
+            return jsonify({'error': 'Incorrect password'}), 401
 
         token = create_token(user)
 

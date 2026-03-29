@@ -39,6 +39,7 @@ def _format_user(user):
         'department': user.get('department'),
         'phone': user.get('phone', ''),
         'phone_public': user.get('phone_public', False),
+        'roll_number': user.get('roll_number', ''),
         'is_verified': user.get('is_verified', False),
         'profile_picture': user.get('profile_picture'),
         'photo_removed_reason': user.get('photo_removed_reason'),
@@ -128,6 +129,8 @@ def update_profile():
             updates['phone'] = data['phone'].strip()
         if 'phone_public' in data:
             updates['phone_public'] = bool(data['phone_public'])
+        if 'roll_number' in data:
+            updates['roll_number'] = data['roll_number'].strip()
         if 'bio' in data:
             bio = data['bio'].strip()
             if len(bio) > 200:
