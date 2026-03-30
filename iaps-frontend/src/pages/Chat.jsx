@@ -847,6 +847,9 @@ function Chat({ user }) {
 
   const handleDeleteWithMode = async (msgId, mode) => {
     setDeleteMenu(null);
+    if (mode === 'for_everyone') {
+      if (!window.confirm('Delete this message for everyone? This cannot be undone.')) return;
+    }
     try {
       await chatAPI.deleteMessage(semesterId, msgId, mode);
       if (mode === 'for_me') {

@@ -337,6 +337,12 @@ export const timetableAPI = {
   listOverrides: (semesterId) => api.get(`/timetable/semester/${semesterId}/overrides`),
   pushToCalendar: (semesterId, data) =>
     api.post(`/timetable/semester/${semesterId}/push-to-calendar`, data),
+  syncCalendar: (semesterId) =>
+    api.post(`/timetable/semester/${semesterId}/sync-calendar`),
+  clearTimetableFromCalendar: (semesterId) =>
+    api.delete(`/timetable/semester/${semesterId}/push-to-calendar`),
+  pushThisWeek: (semesterId, date, days = null) =>
+    api.post(`/timetable/semester/${semesterId}/push-this-week`, { date, ...(days && { days }) }),
 
   // Academic calendar
   extractAcademicCalendar: (semesterId, formData) =>
@@ -349,6 +355,21 @@ export const timetableAPI = {
     api.get(`/timetable/semester/${semesterId}/academic-calendar`),
   pushAcademicCalendar: (semesterId) =>
     api.post(`/timetable/semester/${semesterId}/academic-calendar/push-to-calendar`),
+  clearAcademicCalendarFromGcal: (semesterId) =>
+    api.delete(`/timetable/semester/${semesterId}/academic-calendar/push-to-calendar`),
+
+  // Single-day GCal push/delete (used from override modal)
+  // pushDay always deletes existing events for that date before recreating — safe to call as "update" too
+  pushDay: (semesterId, date) =>
+    api.post(`/timetable/semester/${semesterId}/push-day`, { date }),
+  deleteDay: (semesterId, date) =>
+    api.delete(`/timetable/semester/${semesterId}/push-day`, { data: { date } }),
+
+  // Personal skips (per-user, any member)
+  addPersonalSkip: (semesterId, data) =>
+    api.post(`/timetable/semester/${semesterId}/personal-skip`, data),
+  deletePersonalSkip: (semesterId, skipId) =>
+    api.delete(`/timetable/semester/${semesterId}/personal-skip/${skipId}`),
 };
 
 export const attendanceAPI = {

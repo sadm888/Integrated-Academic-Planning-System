@@ -613,6 +613,17 @@ def get_week_view(semester_id):
         except Exception as ac_err:
             logger.warning(f"Failed to fetch AC events for week view: {ac_err}")
 
+        # Fetch this user's personal skips for the week
+        personal_skips_cursor = db.personal_skips.find({
+            'user_id': user_id,
+            'semester_id': semester_id,
+            'date': {'$in': week_dates},
+        })
+        personal_skips = [
+            {'id': str(ps['_id']), 'day': ps['day'], 'slot': ps['slot'], 'date': ps['date'], 'reason': ps.get('reason', '')}
+            for ps in personal_skips_cursor
+        ]
+
         return jsonify({
             'timetable': _serialize_timetable(doc),
             'week_grid': week_grid,
@@ -621,6 +632,7 @@ def get_week_view(semester_id):
             'is_cr': is_cr,
             'ac_events': ac_events,
             'day_overrides': day_overrides,
+            'personal_skips': personal_skips,
         }), 200
 
     except Exception as e:
@@ -875,19 +887,138 @@ def _day_to_rrule(day):
     return {'Mon': 'MO', 'Tue': 'TU', 'Wed': 'WE', 'Thu': 'TH', 'Fri': 'FR', 'Sat': 'SA', 'Sun': 'SU'}.get(day, 'MO')
 
 
+_SKIP_TYPES = ('Free', 'Lunch', 'Break', 'Library', 'Cancelled', '')
+_GCAL_TYPE_COLOR = {'Lecture': '7', 'Lab': '3', 'Tutorial': '2'}
+_DAY_TO_WEEKDAY = {'Mon': 0, 'Tue': 1, 'Wed': 2, 'Thu': 3, 'Fri': 4, 'Sat': 5, 'Sun': 6}
+
+
+def _build_merged_timetable_events(days, time_slots, grid):
+    """
+    Iterate each day's slots and merge consecutive slots that share the same
+    subject + type into a single time block (e.g. two back-to-back Lab slots
+    become one longer event instead of two separate ones).
+
+    Merging is based solely on consecutive index position + matching subject+type.
+    We do NOT require the parsed times to be adjacent because slot strings like
+    '12:00-1:00' parse to eh=1 which would never equal the next slot's sh=1 in
+    a naive numeric comparison (1 != 12).  Instead we simply use the START time
+    of the first slot and the END time of the last merged slot.
+    Returns a list of dicts: day, sh, sm, eh, em, subject, cell_type, teacher, room.
+    """
+    events = []
+    for day in days:
+        i = 0
+        while i < len(time_slots):
+            slot = time_slots[i]
+            cell = grid.get(day, {}).get(slot, {})
+            subject = cell.get('subject', '').strip()
+            cell_type = cell.get('type', 'Free')
+            if not subject or cell_type in _SKIP_TYPES:
+                i += 1
+                continue
+            parsed = _parse_time_slot(slot)
+            if not parsed:
+                i += 1
+                continue
+            sh, sm, eh, em = parsed
+            teacher = cell.get('teacher', '')
+            room = cell.get('room', '')
+
+            rescheduled = cell.get('rescheduled_time', '')
+
+            # Merge consecutive slots with same subject + type (index-based, no time check).
+            # Do NOT merge if this slot has a rescheduled_time — rescheduled slots stand alone.
+            j = i + 1
+            if not rescheduled:
+                while j < len(time_slots):
+                    next_cell = grid.get(day, {}).get(time_slots[j], {})
+                    next_subject = next_cell.get('subject', '').strip()
+                    next_type = next_cell.get('type', 'Free')
+                    if next_subject == subject and next_type == cell_type and not next_cell.get('rescheduled_time'):
+                        next_parsed = _parse_time_slot(time_slots[j])
+                        if next_parsed:
+                            eh, em = next_parsed[2], next_parsed[3]
+                        j += 1
+                        continue
+                    break
+
+            # Use rescheduled_time if set (single-slot override — replaces original time)
+            if rescheduled:
+                rp = _parse_time_slot(rescheduled)
+                if rp:
+                    sh, sm, eh, em = rp
+
+            events.append({
+                'day': day, 'sh': sh, 'sm': sm, 'eh': eh, 'em': em,
+                'subject': subject, 'cell_type': cell_type,
+                'teacher': teacher, 'room': room,
+                'status': cell.get('status', 'normal'),
+                'override_reason': cell.get('override_reason', ''),
+                'slots': time_slots[i:j],  # all original slot keys merged into this event
+            })
+            i = j
+    return events
+
+
+def _build_gcal_event_body(ev, event_date, iso_week, semester_id):
+    """
+    Build the Google Calendar event dict for a merged timetable event.
+    event_date: date object for the specific calendar date.
+    """
+    date_str = event_date.strftime('%Y-%m-%d')
+    start_dt = datetime(event_date.year, event_date.month, event_date.day, ev['sh'], ev['sm'])
+    end_dt = datetime(event_date.year, event_date.month, event_date.day, ev['eh'], ev['em'])
+    desc_parts = []
+    if ev.get('teacher'): desc_parts.append(f"Faculty: {ev['teacher']}")
+    if ev.get('room'): desc_parts.append(f"Room: {ev['room']}")
+    if ev.get('override_reason'): desc_parts.append(f"Note: {ev['override_reason']}")
+    return {
+        'summary': ev['subject'],
+        'description': '\n'.join(desc_parts),
+        'location': ev.get('room', ''),
+        'start': {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'Asia/Kolkata'},
+        'end': {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'Asia/Kolkata'},
+        'colorId': _GCAL_TYPE_COLOR.get(ev['cell_type'], '8'),
+        'extendedProperties': {
+            'private': {
+                'iaps_timetable': 'true',
+                'iaps_timetable_week': iso_week,
+                'iaps_timetable_date': date_str,
+                'iaps_semester_id': semester_id,
+                'iaps_type': ev['cell_type'],
+            }
+        },
+    }
+
+
+def _delete_gcal_events_by_property(service, prop_key, prop_value):
+    """Delete all primary-calendar events matching a privateExtendedProperty."""
+    page_token = None
+    while True:
+        resp = service.events().list(
+            calendarId='primary',
+            privateExtendedProperty=f'{prop_key}={prop_value}',
+            pageToken=page_token,
+            maxResults=250,
+        ).execute()
+        for ev in resp.get('items', []):
+            try:
+                service.events().delete(calendarId='primary', eventId=ev['id']).execute()
+            except Exception:
+                pass
+        page_token = resp.get('nextPageToken')
+        if not page_token:
+            break
+
+
 def _resync_gcal_for_user(db, user_id, semester_id, doc):
     """
-    Delete all previously-pushed IAPS timetable events for this semester
-    from the user's Google Calendar, then recreate them from the current grid.
-    Silently returns if the user hasn't pushed or has no GCal token.
+    When the timetable is edited, clear any stale IAPS timetable events from the
+    user's Google Calendar so they don't see outdated recurring events.
+    Users re-push via 'Push This Week' / 'Sync This Week' in the weekly view.
     """
-    from utils.google_calendar import get_calendar_service, create_calendar_event
+    from utils.google_calendar import get_calendar_service
     from google.auth.exceptions import RefreshError
-    from googleapiclient.errors import HttpError
-
-    push_config = doc.get('push_config', {}).get(str(user_id))
-    if not push_config:
-        return  # user never pushed
 
     token_doc = db.google_tokens.find_one({'user_id': str(user_id)})
     if not token_doc:
@@ -898,77 +1029,72 @@ def _resync_gcal_for_user(db, user_id, semester_id, doc):
     except (RefreshError, Exception):
         return
 
-    # Delete existing IAPS events for this semester
     try:
-        page_token = None
-        while True:
-            resp = service.events().list(
-                calendarId='primary',
-                privateExtendedProperty=f'iaps_semester_id={semester_id}',
-                privateExtendedProperty2='iaps_timetable=true',
-                pageToken=page_token,
-                maxResults=250,
-            ).execute()
-            for ev in resp.get('items', []):
-                try:
-                    service.events().delete(calendarId='primary', eventId=ev['id']).execute()
-                except Exception:
-                    pass
-            page_token = resp.get('nextPageToken')
-            if not page_token:
-                break
+        _delete_gcal_events_by_property(service, 'iaps_timetable', 'true')
     except Exception as e:
         logger.warning(f"GCal delete old events failed for user {user_id}: {e}")
 
-    # Recreate with current grid
-    TYPE_COLOR = {'Lecture': '7', 'Lab': '3', 'Tutorial': '2'}
-    days = doc.get('days', [])
-    time_slots = doc.get('time_slots', [])
-    grid = doc.get('grid', {})
 
-    try:
-        sem_start = date.fromisoformat(push_config.get('semester_start') or date.today().isoformat())
-        sem_end = date.fromisoformat(push_config['semester_end'])
-    except (ValueError, KeyError):
+def _resync_academic_gcal_for_user(db, user_id, semester_id, doc):
+    """
+    Delete all previously-pushed IAPS academic calendar events for this semester
+    from the user's Google Calendar, then recreate from the current doc.
+    Silently no-ops if user hasn't pushed or has no GCal token.
+    """
+    from utils.google_calendar import get_calendar_service, create_calendar_event
+    from google.auth.exceptions import RefreshError
+
+    if user_id not in doc.get('pushed_by', []):
         return
 
-    until_str = sem_end.strftime('%Y%m%dT235959Z')
+    token_doc = db.google_tokens.find_one({'user_id': str(user_id)})
+    if not token_doc:
+        return
 
-    for day in days:
-        first_date = _next_weekday_date(sem_start, day)
-        for slot in time_slots:
-            cell = grid.get(day, {}).get(slot, {})
-            subject = cell.get('subject', '').strip()
-            cell_type = cell.get('type', 'Free')
-            if not subject or cell_type in ('Free', 'Lunch', 'Break', 'Library', 'Cancelled', ''):
-                continue
-            parsed = _parse_time_slot(slot)
-            if not parsed:
-                continue
-            sh, sm, eh, em = parsed
-            start_dt = datetime(first_date.year, first_date.month, first_date.day, sh, sm)
-            end_dt = datetime(first_date.year, first_date.month, first_date.day, eh, em)
-            teacher = cell.get('teacher', '')
-            room = cell.get('room', '')
-            desc_parts = []
-            if teacher: desc_parts.append(f"Faculty: {teacher}")
-            if room: desc_parts.append(f"Room: {room}")
-            event_body = {
-                'summary': subject,
-                'description': '\n'.join(desc_parts),
-                'location': room,
-                'start': {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'Asia/Kolkata'},
-                'end': {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'Asia/Kolkata'},
-                'recurrence': [f'RRULE:FREQ=WEEKLY;BYDAY={_day_to_rrule(day)};UNTIL={until_str}'],
-                'colorId': TYPE_COLOR.get(cell_type, '8'),
-                'extendedProperties': {
-                    'private': {'iaps_timetable': 'true', 'iaps_semester_id': semester_id, 'iaps_type': cell_type}
-                },
-            }
-            try:
-                create_calendar_event(service, event_body)
-            except Exception:
-                pass
+    try:
+        service = get_calendar_service(token_doc, db, str(user_id))
+    except (RefreshError, Exception):
+        return
+
+    try:
+        _delete_gcal_events_by_property(service, 'iaps_academic_calendar', 'true')
+    except Exception as e:
+        logger.warning(f"GCal delete academic events failed for user {user_id}: {e}")
+
+    TYPE_COLOR = {
+        'Holiday': '11', 'Exam': '6', 'Event': '7',
+        'Break': '3', 'Submission': '5', 'Other': '8',
+    }
+    for ev in doc.get('events', []):
+        ev_date = ev.get('date', '').strip()
+        ev_end_date = ev.get('end_date', ev_date).strip()
+        title = ev.get('title', '').strip()
+        ev_type = ev.get('type', 'Other')
+        description = ev.get('description', '').strip()
+        if not ev_date or not title:
+            continue
+        try:
+            end_dt = date.fromisoformat(ev_end_date)
+            exclusive_end = (end_dt + timedelta(days=1)).isoformat()
+        except ValueError:
+            continue
+        desc_parts = [f"Type: {ev_type}"]
+        if description:
+            desc_parts.append(description)
+        event_body = {
+            'summary': title,
+            'description': '\n'.join(desc_parts),
+            'start': {'date': ev_date},
+            'end': {'date': exclusive_end},
+            'colorId': TYPE_COLOR.get(ev_type, '8'),
+            'extendedProperties': {
+                'private': {'iaps_academic_calendar': 'true', 'iaps_semester_id': semester_id}
+            },
+        }
+        try:
+            create_calendar_event(service, event_body)
+        except Exception:
+            pass
 
 
 def _next_weekday_date(ref_date, day_abbr):
@@ -1021,7 +1147,7 @@ def push_to_calendar(semester_id):
 
         until_str = sem_end.strftime('%Y%m%dT235959Z')
         # Google Calendar color IDs: 1=Lavender, 2=Sage, 3=Grape, 7=Peacock(blue), 6=Tangerine
-        TYPE_COLOR = {'Lecture': '7', 'Lab': '3', 'Tutorial': '2'}
+        TYPE_COLOR = _GCAL_TYPE_COLOR
 
         days = doc.get('days', [])
         time_slots = doc.get('time_slots', [])
@@ -1029,46 +1155,37 @@ def push_to_calendar(semester_id):
         created = 0
         skipped = 0
 
-        for day in days:
-            first_date = _next_weekday_date(sem_start, day)
-            for slot in time_slots:
-                cell = grid.get(day, {}).get(slot, {})
-                subject = cell.get('subject', '').strip()
-                cell_type = cell.get('type', 'Free')
-                if not subject or cell_type in ('Free', 'Lunch', 'Break', 'Library', ''):
-                    skipped += 1
-                    continue
-                parsed = _parse_time_slot(slot)
-                if not parsed:
-                    skipped += 1
-                    continue
-                sh, sm, eh, em = parsed
-                start_dt = datetime(first_date.year, first_date.month, first_date.day, sh, sm)
-                end_dt = datetime(first_date.year, first_date.month, first_date.day, eh, em)
-                teacher = cell.get('teacher', '')
-                room = cell.get('room', '')
-                desc_parts = []
-                if teacher: desc_parts.append(f"Faculty: {teacher}")
-                if room: desc_parts.append(f"Room: {room}")
-                if cell_type not in ('Lecture', 'Lab', 'Tutorial'): desc_parts.append(f"Type: {cell_type}")
-                event_body = {
-                    'summary': subject,
-                    'description': '\n'.join(desc_parts),
-                    'location': room,
-                    'start': {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'Asia/Kolkata'},
-                    'end': {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'Asia/Kolkata'},
-                    'recurrence': [f'RRULE:FREQ=WEEKLY;BYDAY={_day_to_rrule(day)};UNTIL={until_str}'],
-                    'colorId': TYPE_COLOR.get(cell_type, '8'),
-                    'extendedProperties': {
-                        'private': {'iaps_timetable': 'true', 'iaps_semester_id': semester_id, 'iaps_type': cell_type}
-                    },
-                }
-                try:
-                    create_calendar_event(service, event_body)
-                    created += 1
-                except HttpError as he:
-                    logger.warning(f"Failed to create event {day} {slot}: {he}")
-                    skipped += 1
+        # Remove previously pushed events for this user+semester before re-pushing
+        try:
+            _delete_gcal_events_by_property(service, 'iaps_timetable', 'true')
+        except Exception as del_err:
+            logger.warning(f"Could not clear old timetable events: {del_err}")
+
+        for ev in _build_merged_timetable_events(days, time_slots, grid):
+            first_date = _next_weekday_date(sem_start, ev['day'])
+            start_dt = datetime(first_date.year, first_date.month, first_date.day, ev['sh'], ev['sm'])
+            end_dt = datetime(first_date.year, first_date.month, first_date.day, ev['eh'], ev['em'])
+            desc_parts = []
+            if ev['teacher']: desc_parts.append(f"Faculty: {ev['teacher']}")
+            if ev['room']: desc_parts.append(f"Room: {ev['room']}")
+            if ev['cell_type'] not in ('Lecture', 'Lab', 'Tutorial'): desc_parts.append(f"Type: {ev['cell_type']}")
+            event_body = {
+                'summary': ev['subject'],
+                'description': '\n'.join(desc_parts),
+                'location': ev['room'],
+                'start': {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'Asia/Kolkata'},
+                'end': {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'Asia/Kolkata'},
+                'colorId': TYPE_COLOR.get(ev['cell_type'], '8'),
+                'extendedProperties': {
+                    'private': {'iaps_timetable': 'true', 'iaps_semester_id': semester_id, 'iaps_type': ev['cell_type']}
+                },
+            }
+            try:
+                create_calendar_event(service, event_body)
+                created += 1
+            except HttpError as he:
+                logger.warning(f"Failed to create event {ev['day']} {ev['sh']}:{ev['sm']}: {he}")
+                skipped += 1
 
         db.timetables.update_one({'_id': doc['_id']}, {
             '$addToSet': {'pushed_by': user_id},
@@ -1091,6 +1208,417 @@ def push_to_calendar(semester_id):
     except Exception as e:
         logger.error(f"Push to calendar error: {e}")
         return jsonify({'error': 'Failed to push timetable to calendar'}), 500
+
+
+@timetable_bp.route('/semester/<semester_id>/sync-calendar', methods=['POST'])
+@token_required
+def sync_calendar(semester_id):
+    """Re-push timetable to GCal using the previously saved semester dates. No body needed."""
+    from database import get_db
+    from utils.google_calendar import get_calendar_service, create_calendar_event
+    from google.auth.exceptions import RefreshError
+    from googleapiclient.errors import HttpError
+
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+
+        semester, _, _ = _get_semester_and_check(db, semester_id, user_id)
+        if semester is None:
+            return jsonify({'error': 'Semester not found or access denied'}), 404
+
+        doc = db.timetables.find_one({'semester_id': semester_id})
+        if not doc:
+            return jsonify({'error': 'No timetable found for this semester'}), 404
+
+        push_config = doc.get('push_config', {}).get(user_id)
+        if not push_config:
+            return jsonify({'error': 'No previous push found. Use Push Full Semester first to set dates.', 'no_config': True}), 400
+
+        token_doc = db.google_tokens.find_one({'user_id': user_id})
+        if not token_doc:
+            return jsonify({'error': 'Google Calendar not connected', 'not_connected': True}), 403
+
+        try:
+            service = get_calendar_service(token_doc, db, user_id)
+        except RefreshError:
+            db.google_tokens.delete_one({'user_id': user_id})
+            return jsonify({'error': 'Google Calendar access was revoked. Please reconnect.', 'not_connected': True}), 403
+
+        try:
+            sem_start = date.fromisoformat(push_config.get('semester_start') or date.today().isoformat())
+            sem_end = date.fromisoformat(push_config['semester_end'])
+        except (ValueError, KeyError):
+            return jsonify({'error': 'Saved dates are invalid. Re-push using Push Full Semester.'}), 400
+
+        until_str = sem_end.strftime('%Y%m%dT235959Z')
+        TYPE_COLOR = _GCAL_TYPE_COLOR
+        days = doc.get('days', [])
+        time_slots = doc.get('time_slots', [])
+        grid = doc.get('grid', {})
+
+        _delete_gcal_events_by_property(service, 'iaps_timetable', 'true')
+
+        created = 0
+        for ev in _build_merged_timetable_events(days, time_slots, grid):
+            first_date = _next_weekday_date(sem_start, ev['day'])
+            start_dt = datetime(first_date.year, first_date.month, first_date.day, ev['sh'], ev['sm'])
+            end_dt = datetime(first_date.year, first_date.month, first_date.day, ev['eh'], ev['em'])
+            desc_parts = []
+            if ev['teacher']: desc_parts.append(f"Faculty: {ev['teacher']}")
+            if ev['room']: desc_parts.append(f"Room: {ev['room']}")
+            event_body = {
+                'summary': ev['subject'],
+                'description': '\n'.join(desc_parts),
+                'location': ev['room'],
+                'start': {'dateTime': start_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'Asia/Kolkata'},
+                'end': {'dateTime': end_dt.strftime('%Y-%m-%dT%H:%M:%S'), 'timeZone': 'Asia/Kolkata'},
+                'colorId': TYPE_COLOR.get(ev['cell_type'], '8'),
+                'extendedProperties': {
+                    'private': {'iaps_timetable': 'true', 'iaps_semester_id': semester_id, 'iaps_type': ev['cell_type']}
+                },
+            }
+            try:
+                create_calendar_event(service, event_body)
+                created += 1
+            except HttpError:
+                pass
+
+        return jsonify({'message': f'GCal synced — {created} recurring event{"s" if created != 1 else ""} updated'}), 200
+
+    except HttpError as e:
+        logger.error(f"Google API error in sync-calendar: {e}")
+        return jsonify({'error': 'Google Calendar API error', 'details': str(e)}), 502
+    except Exception as e:
+        logger.error(f"Sync calendar error: {e}")
+        return jsonify({'error': 'Failed to sync calendar'}), 500
+
+
+@timetable_bp.route('/semester/<semester_id>/push-to-calendar', methods=['DELETE'])
+@token_required
+def clear_timetable_from_calendar(semester_id):
+    """Delete all IAPS-pushed timetable events from the user's Google Calendar."""
+    from database import get_db
+    from utils.google_calendar import get_calendar_service
+    from google.auth.exceptions import RefreshError
+    from googleapiclient.errors import HttpError
+
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+
+        semester, _, _ = _get_semester_and_check(db, semester_id, user_id)
+        if semester is None:
+            return jsonify({'error': 'Semester not found or access denied'}), 404
+
+        token_doc = db.google_tokens.find_one({'user_id': user_id})
+        if not token_doc:
+            return jsonify({'error': 'Google Calendar not connected', 'not_connected': True}), 403
+
+        try:
+            service = get_calendar_service(token_doc, db, user_id)
+        except RefreshError:
+            db.google_tokens.delete_one({'user_id': user_id})
+            return jsonify({'error': 'Google Calendar access was revoked. Please reconnect.', 'not_connected': True}), 403
+
+        _delete_gcal_events_by_property(service, 'iaps_timetable', 'true')
+
+        # Remove user from pushed_by so resync skips them until they push again
+        doc = db.timetables.find_one({'semester_id': semester_id})
+        if doc:
+            db.timetables.update_one({'_id': doc['_id']}, {
+                '$pull': {'pushed_by': user_id},
+                '$unset': {f'push_config.{user_id}': ''},
+            })
+
+        return jsonify({'message': 'All IAPS timetable events removed from Google Calendar'}), 200
+
+    except HttpError as e:
+        logger.error(f"Google API error clearing timetable events: {e}")
+        return jsonify({'error': 'Google Calendar API error', 'details': str(e)}), 502
+    except Exception as e:
+        logger.error(f"Clear timetable events error: {e}")
+        return jsonify({'error': 'Failed to clear timetable events'}), 500
+
+
+@timetable_bp.route('/semester/<semester_id>/push-this-week', methods=['POST'])
+@token_required
+def push_this_week(semester_id):
+    """Push this week's timetable as one-time (non-recurring) events to Google Calendar."""
+    from database import get_db
+    from utils.google_calendar import get_calendar_service, create_calendar_event
+    from google.auth.exceptions import RefreshError
+    from googleapiclient.errors import HttpError
+
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+
+        semester, _, _ = _get_semester_and_check(db, semester_id, user_id)
+        if semester is None:
+            return jsonify({'error': 'Semester not found or access denied'}), 404
+
+        doc = db.timetables.find_one({'semester_id': semester_id})
+        if not doc:
+            return jsonify({'error': 'No timetable found for this semester'}), 404
+
+        token_doc = db.google_tokens.find_one({'user_id': user_id})
+        if not token_doc:
+            return jsonify({'error': 'Google Calendar not connected', 'not_connected': True}), 403
+
+        try:
+            service = get_calendar_service(token_doc, db, user_id)
+        except RefreshError:
+            db.google_tokens.delete_one({'user_id': user_id})
+            return jsonify({'error': 'Google Calendar access was revoked. Please reconnect.', 'not_connected': True}), 403
+
+        body = request.get_json(silent=True, force=True) or {}
+        date_str = body.get('date')
+        only_days = body.get('days')  # optional list e.g. ['Mon', 'Wed'] to push only selected days
+        if date_str:
+            try:
+                ref_date = date.fromisoformat(date_str)
+            except ValueError:
+                ref_date = date.today()
+        else:
+            ref_date = date.today()
+
+        week_monday = ref_date - timedelta(days=ref_date.weekday())
+        week_dates = [(week_monday + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(7)]
+        iso_week = week_monday.strftime('%Y-W%W')
+
+        # Delete any previously pushed events for this specific week before recreating
+        _delete_gcal_events_by_property(service, 'iaps_timetable_week', iso_week)
+
+        # Fetch overrides for this week (exactly what the weekly view shows)
+        overrides_cursor = db.timetable_overrides.find({
+            'semester_id': semester_id,
+            '$or': [
+                {'date': {'$in': week_dates}},
+                {'scope': 'all_future'},
+            ]
+        })
+        overrides = [_serialize_override(ov) for ov in overrides_cursor]
+
+        days = doc.get('days', [])
+        time_slots = doc.get('time_slots', [])
+
+        # Apply overrides — same function as the weekly view endpoint
+        week_grid, day_overrides = _apply_overrides_to_week(
+            doc.get('grid', {}), days, time_slots, overrides, week_monday
+        )
+
+        # Fetch user's personal skips for this week
+        personal_skips_cursor = db.personal_skips.find({
+            'user_id': user_id,
+            'semester_id': semester_id,
+            'date': {'$in': week_dates},
+        })
+        personal_skip_keys = {(ps['day'], ps['slot'], ps['date']) for ps in personal_skips_cursor}
+
+        created = 0
+        skipped = 0
+
+        # Build merged events from the resolved weekly grid (respects overrides, holidays, cancellations)
+        for ev in _build_merged_timetable_events(days, time_slots, week_grid):
+            if only_days and ev['day'] not in only_days:
+                skipped += 1
+                continue
+            if ev.get('status') in ('cancelled', 'holiday'):
+                skipped += 1
+                continue
+            if ev['day'] in day_overrides:
+                skipped += 1
+                continue
+
+            weekday_offset = _DAY_TO_WEEKDAY.get(ev['day'])
+            if weekday_offset is None:
+                skipped += 1
+                continue
+
+            event_date = week_monday + timedelta(days=weekday_offset)
+            event_date_str = event_date.strftime('%Y-%m-%d')
+
+            if any((ev['day'], s, event_date_str) in personal_skip_keys for s in ev.get('slots', [])):
+                skipped += 1
+                continue
+
+            try:
+                create_calendar_event(service, _build_gcal_event_body(ev, event_date, iso_week, semester_id))
+                created += 1
+            except HttpError as he:
+                logger.warning(f"Failed to create this-week event {ev['day']}: {he}")
+                skipped += 1
+
+        return jsonify({
+            'message': f'{created} event{"s" if created != 1 else ""} pushed for week of {week_monday.strftime("%d %b")} (holidays/cancellations excluded)',
+            'created': created,
+            'skipped': skipped,
+        }), 200
+
+    except HttpError as e:
+        logger.error(f"Google API error in push-this-week: {e}")
+        return jsonify({'error': 'Google Calendar API error', 'details': str(e)}), 502
+    except Exception as e:
+        logger.error(f"Push this week error: {e}")
+        return jsonify({'error': 'Failed to push this week'}), 500
+
+
+@timetable_bp.route('/semester/<semester_id>/push-day', methods=['POST', 'DELETE'])
+@token_required
+def push_day(semester_id):
+    """
+    POST  — push all classes for a single date to GCal (delete existing events for that date first).
+    DELETE — remove all GCal events for a single date.
+    Body: { date: 'YYYY-MM-DD' }
+    """
+    from database import get_db
+    from utils.google_calendar import get_calendar_service, create_calendar_event
+    from google.auth.exceptions import RefreshError
+    from googleapiclient.errors import HttpError
+
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+
+        semester, _, _ = _get_semester_and_check(db, semester_id, user_id)
+        if semester is None:
+            return jsonify({'error': 'Semester not found or access denied'}), 404
+
+        token_doc = db.google_tokens.find_one({'user_id': user_id})
+        if not token_doc:
+            return jsonify({'error': 'Google Calendar not connected', 'not_connected': True}), 403
+
+        try:
+            service = get_calendar_service(token_doc, db, user_id)
+        except RefreshError:
+            db.google_tokens.delete_one({'user_id': user_id})
+            return jsonify({'error': 'Google Calendar access was revoked. Please reconnect.', 'not_connected': True}), 403
+
+        body = request.get_json(silent=True, force=True) or {}
+        date_str = body.get('date')
+        if not date_str:
+            return jsonify({'error': 'date is required'}), 400
+
+        try:
+            ref_date = date.fromisoformat(date_str)
+        except ValueError:
+            return jsonify({'error': 'Invalid date format'}), 400
+
+        # Delete existing events for this specific date
+        _delete_gcal_events_by_property(service, 'iaps_timetable_date', date_str)
+
+        if request.method == 'DELETE':
+            return jsonify({'message': f'GCal events removed for {date_str}'}), 200
+
+        # POST — push classes for this date
+        doc = db.timetables.find_one({'semester_id': semester_id})
+        if not doc:
+            return jsonify({'error': 'No timetable found'}), 404
+
+        day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        target_day = day_names[ref_date.weekday()]
+
+        week_monday = ref_date - timedelta(days=ref_date.weekday())
+        week_dates = [(week_monday + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(7)]
+        iso_week = week_monday.strftime('%Y-W%W')
+
+        overrides_cursor = db.timetable_overrides.find({
+            'semester_id': semester_id,
+            '$or': [{'date': {'$in': week_dates}}, {'scope': 'all_future'}],
+        })
+        overrides = [_serialize_override(ov) for ov in overrides_cursor]
+
+        days = doc.get('days', [])
+        time_slots = doc.get('time_slots', [])
+        week_grid, day_overrides = _apply_overrides_to_week(doc.get('grid', {}), days, time_slots, overrides, week_monday)
+
+        # Fetch personal skips for this user on this date
+        personal_skips_cursor = db.personal_skips.find({'user_id': user_id, 'semester_id': semester_id, 'date': date_str})
+        personal_skip_keys = {(ps['day'], ps['slot']) for ps in personal_skips_cursor}
+
+        if target_day in day_overrides:
+            return jsonify({'message': f'Day {date_str} is a holiday/cancelled day — existing GCal events removed, none created', 'created': 0}), 200
+
+        created = 0
+
+        for ev in _build_merged_timetable_events(days, time_slots, week_grid):
+            if ev['day'] != target_day:
+                continue
+            if ev.get('status') in ('cancelled', 'holiday'):
+                continue
+            if any((ev['day'], s) in personal_skip_keys for s in ev.get('slots', [])):
+                continue
+
+            try:
+                create_calendar_event(service, _build_gcal_event_body(ev, ref_date, iso_week, semester_id))
+                created += 1
+            except HttpError as he:
+                logger.warning(f"Failed to create day event: {he}")
+
+        return jsonify({'message': f'{created} event{"s" if created != 1 else ""} pushed for {date_str}', 'created': created}), 200
+
+    except HttpError as e:
+        logger.error(f"Google API error in push-day: {e}")
+        return jsonify({'error': 'Google Calendar API error', 'details': str(e)}), 502
+    except Exception as e:
+        logger.error(f"Push day error: {e}")
+        return jsonify({'error': 'Failed to push day'}), 500
+
+
+@timetable_bp.route('/semester/<semester_id>/personal-skip', methods=['POST'])
+@token_required
+def add_personal_skip(semester_id):
+    """Personal skip for any user — marks a specific slot on a specific date as skipped (not visible to others)."""
+    from database import get_db
+    db = get_db()
+    user_id = request.user['user_id']
+
+    semester, _, _ = _get_semester_and_check(db, semester_id, user_id)
+    if semester is None:
+        return jsonify({'error': 'Semester not found or access denied'}), 404
+
+    data = request.get_json() or {}
+    day = data.get('day')
+    slot = data.get('slot')
+    date_val = data.get('date')
+    reason = data.get('reason', '')
+
+    if not day or not slot or not date_val:
+        return jsonify({'error': 'day, slot, and date are required'}), 400
+
+    # Upsert — remove any existing skip for this exact slot+date first
+    db.personal_skips.delete_one({'user_id': user_id, 'semester_id': semester_id, 'day': day, 'slot': slot, 'date': date_val})
+    result = db.personal_skips.insert_one({
+        'user_id': user_id,
+        'semester_id': semester_id,
+        'day': day,
+        'slot': slot,
+        'date': date_val,
+        'reason': reason,
+        'created_at': datetime.utcnow(),
+    })
+    return jsonify({'id': str(result.inserted_id), 'message': 'Class skipped'}), 201
+
+
+@timetable_bp.route('/semester/<semester_id>/personal-skip/<skip_id>', methods=['DELETE'])
+@token_required
+def delete_personal_skip(semester_id, skip_id):
+    """Remove a personal skip by ID."""
+    from database import get_db
+    from bson import ObjectId
+    db = get_db()
+    user_id = request.user['user_id']
+
+    try:
+        oid = ObjectId(skip_id)
+    except Exception:
+        return jsonify({'error': 'Invalid skip ID'}), 400
+
+    result = db.personal_skips.delete_one({'_id': oid, 'user_id': user_id, 'semester_id': semester_id})
+    if result.deleted_count == 0:
+        return jsonify({'error': 'Skip not found'}), 404
+    return jsonify({'message': 'Skip removed'}), 200
 
 
 # ── Academic Calendar Routes ──────────────────────────────────────────────────
@@ -1215,6 +1743,14 @@ def save_academic_calendar(semester_id):
                         'created_at': datetime.now(timezone.utc),
                     })
 
+        # Resync Google Calendar for all users who previously pushed this academic calendar
+        saved_doc = db.academic_calendars.find_one({'_id': cal_doc['_id']})
+        for pushed_user_id in (saved_doc or {}).get('pushed_by', []):
+            try:
+                _resync_academic_gcal_for_user(db, str(pushed_user_id), semester_id, saved_doc)
+            except Exception as gcal_err:
+                logger.warning(f"Academic GCal resync failed for user {pushed_user_id}: {gcal_err}")
+
         return jsonify({
             'message': 'Academic calendar saved',
             'academic_calendar': {
@@ -1310,6 +1846,12 @@ def push_academic_calendar_to_gcal(semester_id):
         created = 0
         skipped = 0
 
+        # Remove previously pushed events before re-pushing
+        try:
+            _delete_gcal_events_by_property(service, 'iaps_academic_calendar', 'true')
+        except Exception as del_err:
+            logger.warning(f"Could not clear old academic calendar events: {del_err}")
+
         for ev in events:
             ev_date = ev.get('date', '').strip()
             ev_end_date = ev.get('end_date', ev_date).strip()
@@ -1351,6 +1893,12 @@ def push_academic_calendar_to_gcal(semester_id):
                 logger.warning(f"Failed to create academic calendar event '{title}': {he}")
                 skipped += 1
 
+        # Track that this user pushed so we can resync on future calendar updates
+        db.academic_calendars.update_one(
+            {'_id': doc['_id']},
+            {'$addToSet': {'pushed_by': user_id}}
+        )
+
         return jsonify({
             'message': f'{created} event{"s" if created != 1 else ""} added to your Google Calendar',
             'created': created,
@@ -1363,3 +1911,46 @@ def push_academic_calendar_to_gcal(semester_id):
     except Exception as e:
         logger.error(f"Push academic calendar error: {e}")
         return jsonify({'error': 'Failed to push academic calendar to Google Calendar'}), 500
+
+
+@timetable_bp.route('/semester/<semester_id>/academic-calendar/push-to-calendar', methods=['DELETE'])
+@token_required
+def clear_academic_calendar_from_gcal(semester_id):
+    """Delete all IAPS-pushed academic calendar events from the user's Google Calendar."""
+    from database import get_db
+    from utils.google_calendar import get_calendar_service
+    from google.auth.exceptions import RefreshError
+    from googleapiclient.errors import HttpError
+
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+
+        semester, _, _ = _get_semester_and_check(db, semester_id, user_id)
+        if semester is None:
+            return jsonify({'error': 'Semester not found or access denied'}), 404
+
+        token_doc = db.google_tokens.find_one({'user_id': user_id})
+        if not token_doc:
+            return jsonify({'error': 'Google Calendar not connected', 'not_connected': True}), 403
+
+        try:
+            service = get_calendar_service(token_doc, db, user_id)
+        except RefreshError:
+            db.google_tokens.delete_one({'user_id': user_id})
+            return jsonify({'error': 'Google Calendar access was revoked. Please reconnect.', 'not_connected': True}), 403
+
+        _delete_gcal_events_by_property(service, 'iaps_academic_calendar', 'true')
+
+        doc = db.academic_calendars.find_one({'semester_id': semester_id})
+        if doc:
+            db.academic_calendars.update_one({'_id': doc['_id']}, {'$pull': {'pushed_by': user_id}})
+
+        return jsonify({'message': 'All IAPS academic calendar events removed from Google Calendar'}), 200
+
+    except HttpError as e:
+        logger.error(f"Google API error clearing academic events: {e}")
+        return jsonify({'error': 'Google Calendar API error', 'details': str(e)}), 502
+    except Exception as e:
+        logger.error(f"Clear academic events error: {e}")
+        return jsonify({'error': 'Failed to clear academic calendar events'}), 500

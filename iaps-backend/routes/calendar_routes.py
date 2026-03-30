@@ -41,11 +41,15 @@ def get_auth_url():
         )
         flow.redirect_uri = Config.GOOGLE_REDIRECT_URI
 
+        # Hint Google to pre-select the user's IAPS email account
+        user_email = request.user.get('email', '')
+
         auth_url, _ = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true',
             prompt='consent',   # always get refresh_token
             state=token,        # carry JWT to identify user at callback
+            login_hint=user_email,
         )
 
         return jsonify({'auth_url': auth_url}), 200
@@ -98,12 +102,23 @@ def oauth_callback():
         flow.fetch_token(code=code)
         credentials = flow.credentials
 
+        # Fetch the Google account email so we can show it in Settings
+        google_email = None
+        try:
+            import googleapiclient.discovery as discovery
+            oauth2_service = discovery.build('oauth2', 'v2', credentials=credentials)
+            user_info = oauth2_service.userinfo().get().execute()
+            google_email = user_info.get('email')
+        except Exception:
+            pass
+
         db = get_db()
         token_doc = {
             'user_id': user_id,
             'access_token': credentials.token,
             'refresh_token': credentials.refresh_token,
             'token_expiry': credentials.expiry,
+            'google_email': google_email,
             'updated_at': datetime.now(timezone.utc),
         }
 
@@ -113,8 +128,8 @@ def oauth_callback():
             upsert=True
         )
 
-        logger.info(f"Google Calendar connected for user {user_id}")
-        return redirect(f"{Config.FRONTEND_URL}/calendar?connected=true")
+        logger.info(f"Google Calendar connected for user {user_id} ({google_email})")
+        return redirect(f"{Config.FRONTEND_URL}/settings?section=Connected+Services&connected=true")
 
     except Exception as e:
         logger.error(f"OAuth callback error: {e}")
@@ -132,7 +147,10 @@ def get_status():
         db = get_db()
         token_doc = db.google_tokens.find_one({'user_id': user_id})
         connected = token_doc is not None and bool(token_doc.get('refresh_token'))
-        return jsonify({'connected': connected}), 200
+        return jsonify({
+            'connected': connected,
+            'google_email': token_doc.get('google_email') if token_doc else None,
+        }), 200
 
     except Exception as e:
         logger.error(f"Status check error: {e}")
@@ -240,11 +258,12 @@ def create_event():
             return jsonify({'error': 'title, start_datetime, and end_datetime are required'}), 400
 
         event_body = format_event_for_google(title, start_dt, end_dt, description, location)
+        # Always tag with iaps_event so the event is visible in IAPS and not mistaken for a personal event
+        private_props = {'iaps_event': 'true'}
         if event_type:
             event_body['colorId'] = _TYPE_COLOR_ID.get(event_type, '1')
-            event_body['extendedProperties'] = {
-                'private': {'iaps_type': event_type}
-            }
+            private_props['iaps_type'] = event_type
+        event_body['extendedProperties'] = {'private': private_props}
         created = create_calendar_event(service, event_body)
 
         return jsonify({'event': created}), 201

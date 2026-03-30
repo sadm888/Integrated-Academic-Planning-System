@@ -86,16 +86,31 @@ def format_event_for_google(title, start_dt, end_dt, description='', location=''
 
 
 def list_calendar_events(service, time_min, time_max, calendar_id='primary'):
-    """Fetch events between time_min and time_max (ISO strings). Returns list of event dicts."""
-    result = service.events().list(
-        calendarId=calendar_id,
-        timeMin=time_min,
-        timeMax=time_max,
-        singleEvents=True,
-        orderBy='startTime',
-        maxResults=250,
-    ).execute()
-    return result.get('items', [])
+    """
+    Fetch all events between time_min and time_max.
+    All events (including personal Google Calendar events) are returned so users
+    can see their full schedule. IAPS events are identified by the presence of
+    any 'iaps_*' key in extendedProperties.private — callers use this to decide
+    whether to allow editing/deleting.
+    """
+    all_events = []
+    page_token = None
+    while True:
+        result = service.events().list(
+            calendarId=calendar_id,
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,
+            orderBy='startTime',
+            maxResults=250,
+            pageToken=page_token,
+        ).execute()
+        all_events.extend(result.get('items', []))
+        page_token = result.get('nextPageToken')
+        if not page_token:
+            break
+
+    return all_events
 
 
 def create_calendar_event(service, event_body, calendar_id='primary'):

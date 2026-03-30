@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CalendarDays } from 'lucide-react';
+import { CalendarDays, RefreshCw } from 'lucide-react';
 import { calendarAPI, scheduleAPI, classroomAPI } from '../services/api';
 import '../styles/Classroom.css';
 
@@ -75,13 +75,20 @@ const EVENT_TYPE_COLORS = {
   Personal:   { bg: '#f3e8ff', text: '#6b21a8', border: '#d8b4fe' },
 };
 
+function isIapsEvent(ev) {
+  return Object.keys(ev.extendedProperties?.private || {}).some(k => k.startsWith('iaps_'));
+}
+
 function getEventTypeFromGCal(ev) {
   // Check IAPS extended property first
   const iapsType = ev.extendedProperties?.private?.iaps_type;
   if (iapsType) return iapsType;
-  // Fallback: infer from colorId
-  const colorMap = { '7': 'Lecture', '3': 'Lab', '2': 'Tutorial', '6': 'Assignment', '11': 'Exam', '10': 'Holiday' };
-  return colorMap[ev.colorId] || 'Personal';
+  // Fallback: infer from colorId for IAPS events; personal events shown as Personal
+  if (isIapsEvent(ev)) {
+    const colorMap = { '7': 'Lecture', '3': 'Lab', '2': 'Tutorial', '6': 'Assignment', '11': 'Exam', '10': 'Holiday' };
+    return colorMap[ev.colorId] || 'Personal';
+  }
+  return 'Personal';
 }
 
 function eventChipStyle(ev) {
@@ -473,9 +480,22 @@ function Calendar({ user }) {
             >
               ← Prev
             </button>
-            <h2 style={{ margin: 0, fontSize: '22px', color: '#333', fontWeight: 700 }}>
-              {MONTH_NAMES[month]} {year}
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h2 style={{ margin: 0, fontSize: '22px', color: '#333', fontWeight: 700 }}>
+                {MONTH_NAMES[month]} {year}
+              </h2>
+              <button
+                onClick={() => fetchEventsForMonth(currentDate)}
+                disabled={eventsLoading}
+                title="Refresh events from Google Calendar"
+                style={{
+                  background: 'none', border: '1.5px solid var(--border-color)', borderRadius: '6px',
+                  padding: '5px 8px', cursor: 'pointer', color: '#667eea', display: 'flex', alignItems: 'center',
+                }}
+              >
+                <RefreshCw size={14} style={{ animation: eventsLoading ? 'spin 1s linear infinite' : 'none' }} />
+              </button>
+            </div>
             <button
               onClick={nextMonth}
               style={{

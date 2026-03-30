@@ -146,10 +146,20 @@ describe('API service', () => {
     expect(typeof timetableAPI.deleteOverride).toBe('function');
     expect(typeof timetableAPI.listOverrides).toBe('function');
     expect(typeof timetableAPI.pushToCalendar).toBe('function');
+    expect(typeof timetableAPI.syncCalendar).toBe('function');
+    expect(typeof timetableAPI.clearTimetableFromCalendar).toBe('function');
+    expect(typeof timetableAPI.pushThisWeek).toBe('function');
+    expect(typeof timetableAPI.pushDay).toBe('function');
+    expect(typeof timetableAPI.deleteDay).toBe('function');
+    expect(typeof timetableAPI.addPersonalSkip).toBe('function');
+    expect(typeof timetableAPI.deletePersonalSkip).toBe('function');
     expect(typeof timetableAPI.extractAcademicCalendar).toBe('function');
     expect(typeof timetableAPI.saveAcademicCalendar).toBe('function');
     expect(typeof timetableAPI.getAcademicCalendar).toBe('function');
     expect(typeof timetableAPI.pushAcademicCalendar).toBe('function');
+    expect(typeof timetableAPI.clearAcademicCalendarFromGcal).toBe('function');
+    // updateDay was a dead duplicate of pushDay — must not exist
+    expect(timetableAPI.updateDay).toBeUndefined();
   });
 
   it('exports dmAPI with correct methods', async () => {

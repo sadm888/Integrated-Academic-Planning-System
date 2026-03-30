@@ -713,8 +713,16 @@ function ConnectedServicesSection() {
   const [loading, setLoading] = useState(true);
   const [showConsent, setShowConsent] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [justConnected, setJustConnected] = useState(false);
 
   useEffect(() => {
+    // Check if we just returned from Google OAuth
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('connected') === 'true') {
+      setJustConnected(true);
+      // Clean the URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
     calendarAPI.getStatus()
       .then((res) => setCalStatus(res.data))
       .catch(() => setCalStatus(null))
@@ -748,6 +756,11 @@ function ConnectedServicesSection() {
   return (
     <div>
       <h2 style={headingStyle}>Connected Services</h2>
+      {justConnected && (
+        <div style={{ background: 'var(--success-bg)', border: '1px solid var(--success-border)', color: 'var(--success-text)', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <CheckCircle size={14} /> Google Calendar connected successfully.
+        </div>
+      )}
       <div style={cardStyle}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{
@@ -760,7 +773,12 @@ function ConnectedServicesSection() {
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Google Calendar</div>
             <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-              {loading ? 'Checking status…' : isConnected ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><CheckCircle size={13} strokeWidth={1.75} color="#22c55e" /> Connected</span> : 'Not connected'}
+              {loading ? 'Checking status…' : isConnected ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <CheckCircle size={13} strokeWidth={1.75} color="#22c55e" />
+                  Connected{calStatus?.google_email ? ` as ${calStatus.google_email}` : ''}
+                </span>
+              ) : 'Not connected'}
             </div>
           </div>
           {!loading && (
@@ -926,9 +944,12 @@ function LoginActivitySection() {
 // ─── main Settings page ──────────────────────────────────────────────────────
 
 function Settings({ user, onLogout, onProfileUpdate }) {
-  const [activeSection, setActiveSection] = useState(() =>
-    sessionStorage.getItem('settings_section') || 'Profile'
-  );
+  const [activeSection, setActiveSection] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sectionParam = params.get('section');
+    if (sectionParam && SECTIONS.includes(sectionParam)) return sectionParam;
+    return sessionStorage.getItem('settings_section') || 'Profile';
+  });
   const [localUser, setLocalUser] = useState(user);
 
   useEffect(() => {
