@@ -14,6 +14,7 @@ import os
 import re
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from flask import Blueprint, request, jsonify, send_file
 from flask_socketio import join_room, emit
@@ -29,6 +30,16 @@ from utils import toggle_reaction
 
 chat_bp = Blueprint('chat', __name__, url_prefix='/api/chat')
 logger = logging.getLogger(__name__)
+
+
+def _safe_decrypt(value: Optional[str]) -> Optional[str]:
+    """Decrypt a message field; return None on failure so one bad record can't crash the whole response."""
+    if value is None:
+        return None
+    try:
+        return decrypt_text(value)
+    except Exception:
+        return None
 
 CHAT_UPLOAD_DIR = os.path.join(os.getcwd(), 'uploads', 'chat')
 os.makedirs(CHAT_UPLOAD_DIR, exist_ok=True)
@@ -99,10 +110,11 @@ def _serialize_message(msg, profile_picture=None):
         'username': msg['username'],
         'full_name': msg.get('full_name') or '',
         'profile_picture': profile_picture,
-        'text': None if deleted else decrypt_text(msg.get('text')),
+        'text': None if deleted else _safe_decrypt(msg.get('text')),
         'created_at': msg['created_at'].isoformat().replace('+00:00', '') + 'Z',
         'deleted_for_everyone': deleted,
         'reactions': msg.get('reactions', []),
+        'edited_at': msg['edited_at'].isoformat().replace('+00:00', '') + 'Z' if msg.get('edited_at') else None,
     }
     if msg.get('file') and not deleted:
         result['file'] = msg['file']
@@ -110,6 +122,16 @@ def _serialize_message(msg, profile_picture=None):
         result['reply_to'] = msg['reply_to']
     if msg.get('poll') and not deleted:
         result['poll'] = msg['poll']
+    if msg.get('list_data') and not deleted:
+        entries = []
+        for e in msg['list_data'].get('entries', []):
+            entry = dict(e)
+            if isinstance(entry.get('created_at'), datetime):
+                entry['created_at'] = entry['created_at'].isoformat().replace('+00:00', '') + 'Z'
+            if isinstance(entry.get('edited_at'), datetime):
+                entry['edited_at'] = entry['edited_at'].isoformat().replace('+00:00', '') + 'Z'
+            entries.append(entry)
+        result['list_data'] = {'prompt': msg['list_data'].get('prompt', ''), 'entries': entries}
     return result
 
 
@@ -540,7 +562,7 @@ def warn_user(semester_id):
         if message_id:
             try:
                 _delete_message_and_cascade(db, message_id, semester_id)
-                socketio.emit('message_deleted', {'message_id': message_id}, room=semester_id)
+                socketio.emit('message_deleted', {'message_id': message_id}, to=semester_id)
             except Exception as del_err:
                 logger.warning(f"Could not delete message {message_id}: {del_err}")
 
@@ -654,7 +676,7 @@ def get_unread_counts():
             last_read = db.chat_read_status.find_one(
                 {'user_id': user_id, 'semester_id': sid}
             )
-            cutoff = last_read['last_read_at'] if last_read else datetime(1970, 1, 1)
+            cutoff = last_read['last_read_at'] if last_read else datetime(1970, 1, 1, tzinfo=timezone.utc)
             count = db.chat_messages.count_documents({
                 'semester_id': sid,
                 'created_at': {'$gt': cutoff},
@@ -705,21 +727,32 @@ def search_messages(semester_id):
         db = get_db()
         if not _is_semester_member(db, semester_id, user_id):
             return jsonify({'error': 'Not a member'}), 403
-        q = (request.args.get('q') or '').strip()
+        q = (request.args.get('q') or '').strip().lower()
         if not q or len(q) < 2:
             return jsonify({'messages': []}), 200
-        msgs = list(db.chat_messages.find(
+
+        # Text is encrypted in the DB so regex on the raw field never matches
+        # plaintext queries. Fetch recent non-deleted messages and filter after
+        # decryption instead.
+        candidates = db.chat_messages.find(
             {
                 'semester_id': semester_id,
-                'text': {'$regex': re.escape(q), '$options': 'i'},
                 'deleted_for_everyone': {'$ne': True},
                 'hidden_for': {'$nin': [user_id]},
             },
             sort=[('created_at', -1)],
-            limit=40,
-        ))
-        msgs.reverse()
-        sender_ids = list({m['user_id'] for m in msgs if m.get('user_id')})
+            limit=2000,
+        )
+        matched = []
+        for m in candidates:
+            plain = (_safe_decrypt(m.get('text')) or '')
+            if q in plain.lower():
+                matched.append(m)
+            if len(matched) >= 40:
+                break
+        matched.reverse()
+
+        sender_ids = list({m['user_id'] for m in matched if m.get('user_id')})
         pic_map = {}
         if sender_ids:
             for u in db.users.find(
@@ -729,7 +762,7 @@ def search_messages(semester_id):
                 pic_map[str(u['_id'])] = u.get('profile_picture')
         return jsonify({'messages': [
             _serialize_message(m, pic_map.get(m.get('user_id')))
-            for m in msgs
+            for m in matched
         ]}), 200
     except Exception as e:
         logger.error(f"search_messages error: {e}")
@@ -1015,7 +1048,7 @@ def pin_message(semester_id):
         sender_doc = db.users.find_one({'_id': ObjectId(msg['user_id'])}, {'profile_picture': 1}) if msg.get('user_id') else None
         pic = (sender_doc.get('profile_picture') or None) if sender_doc else None
         pinned_data = _serialize_message(msg, pic)
-        socketio.emit('message_pinned', {'message': pinned_data, 'pinned_ids': existing}, room=semester_id)
+        socketio.emit('message_pinned', {'message': pinned_data, 'pinned_ids': existing}, to=semester_id)
         return jsonify({'message': 'Message pinned', 'pinned': pinned_data, 'pinned_ids': existing}), 200
     except Exception as e:
         logger.error(f"pin_message error: {e}")
@@ -1063,15 +1096,15 @@ def delete_message(semester_id, message_id):
                     {'_id': ObjectId(message_id)},
                     {'$set': {'deleted_for_everyone': True, 'text': None, 'file': None}}
                 )
-                socketio.emit('message_tombstoned', {'message_id': message_id}, room=semester_id)
+                socketio.emit('message_tombstoned', {'message_id': message_id}, to=semester_id)
                 return jsonify({'message': 'Message deleted for everyone'}), 200
             else:
                 _delete_message_and_cascade(db, message_id, semester_id)
-                socketio.emit('message_deleted', {'message_id': message_id}, room=semester_id)
+                socketio.emit('message_deleted', {'message_id': message_id}, to=semester_id)
                 return jsonify({'message': 'Message deleted'}), 200
         elif _is_cr_or_mod(db, semester_id, user_id):
             _delete_message_and_cascade(db, message_id, semester_id)
-            socketio.emit('message_deleted', {'message_id': message_id}, room=semester_id)
+            socketio.emit('message_deleted', {'message_id': message_id}, to=semester_id)
             return jsonify({'message': 'Message deleted'}), 200
         else:
             return jsonify({'error': 'Not authorized'}), 403
@@ -1098,16 +1131,260 @@ def unpin_message(semester_id):
                 {'_id': ObjectId(semester_id)},
                 {'$pull': {'pinned_message_ids': message_id}}
             )
-            socketio.emit('message_unpinned', {'message_id': message_id}, room=semester_id)
+            socketio.emit('message_unpinned', {'message_id': message_id}, to=semester_id)
         else:
             # Clear all pins
             db.semesters.update_one(
                 {'_id': ObjectId(semester_id)},
                 {'$set': {'pinned_message_ids': []}}
             )
-            socketio.emit('message_unpinned', {'message_id': None}, room=semester_id)
+            socketio.emit('message_unpinned', {'message_id': None}, to=semester_id)
 
         return jsonify({'message': 'Message unpinned'}), 200
     except Exception as e:
         logger.error(f"unpin_message error: {e}")
         return jsonify({'error': 'Failed to unpin message'}), 500
+
+
+# ─── REST helpers (list & edit) ───────────────────────────────────────────────
+
+def _get_list_msg(db, semester_id, message_id):
+    """Fetch a list-type chat message, or None if not found."""
+    try:
+        return db.chat_messages.find_one(
+            {'_id': ObjectId(message_id), 'semester_id': semester_id, 'type': 'list'}
+        )
+    except Exception:
+        return None
+
+
+def _emit_list_updated(db, semester_id, message_id):
+    """Re-fetch, serialize, and broadcast list_updated. Returns the payload."""
+    updated = db.chat_messages.find_one({'_id': ObjectId(message_id)})
+    sender_doc = db.users.find_one({'_id': ObjectId(updated['user_id'])}, {'profile_picture': 1})
+    pic = (sender_doc.get('profile_picture') or None) if sender_doc else None
+    payload = _serialize_message(updated, pic)
+    socketio.emit('list_updated', payload, to=semester_id)
+    return payload
+
+
+# ─── REST: edit own message ───────────────────────────────────────────────────
+
+@chat_bp.route('/<semester_id>/messages/<message_id>', methods=['PUT'])
+@token_required
+def edit_message(semester_id, message_id):
+    """Author edits the text of their own message."""
+    from database import get_db
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+        if not _is_semester_member(db, semester_id, user_id):
+            return jsonify({'error': 'Not a member'}), 403
+
+        data = request.get_json() or {}
+        new_text = (data.get('text') or '').strip()
+        if not new_text:
+            return jsonify({'error': 'Text is required'}), 400
+
+        msg = db.chat_messages.find_one({'_id': ObjectId(message_id), 'semester_id': semester_id})
+        if not msg:
+            return jsonify({'error': 'Message not found'}), 404
+        if msg['user_id'] != user_id:
+            return jsonify({'error': 'Not authorized'}), 403
+        if msg.get('deleted_for_everyone'):
+            return jsonify({'error': 'Cannot edit a deleted message'}), 400
+        if msg.get('type') in ('poll', 'list'):
+            return jsonify({'error': 'Cannot edit this message type'}), 400
+
+        now = datetime.now(timezone.utc)
+        db.chat_messages.update_one(
+            {'_id': ObjectId(message_id)},
+            {'$set': {'text': encrypt_text(new_text), 'edited_at': now}}
+        )
+        updated = db.chat_messages.find_one({'_id': ObjectId(message_id)})
+        sender_doc = db.users.find_one({'_id': ObjectId(user_id)}, {'profile_picture': 1})
+        pic = (sender_doc.get('profile_picture') or None) if sender_doc else None
+        payload = _serialize_message(updated, pic)
+        socketio.emit('message_edited', payload, to=semester_id)
+        return jsonify({'message': payload}), 200
+    except Exception as e:
+        logger.error(f'edit_message error: {e}')
+        return jsonify({'error': 'Failed to edit message'}), 500
+
+
+# ─── REST: list messages ──────────────────────────────────────────────────────
+
+@chat_bp.route('/<semester_id>/lists', methods=['POST'])
+@token_required
+def create_list_message(semester_id):
+    """CR/mod creates a collaborative list message."""
+    from database import get_db
+    try:
+        data = request.get_json() or {}
+        user_id = request.user['user_id']
+        db = get_db()
+        if not _is_semester_member(db, semester_id, user_id):
+            return jsonify({'error': 'Not a member'}), 403
+
+        prompt = (data.get('prompt') or '').strip()
+        if not prompt:
+            return jsonify({'error': 'Prompt is required'}), 400
+
+        user_doc = db.users.find_one(
+            {'_id': ObjectId(user_id)},
+            {'fullName': 1, 'username': 1, 'profile_picture': 1}
+        )
+        username = request.user.get('username', '')
+        full_name = (user_doc.get('fullName') or '') if user_doc else ''
+        profile_picture = (user_doc.get('profile_picture') or None) if user_doc else None
+
+        first_content = (data.get('content') or '').strip()
+        entries = []
+        if first_content:
+            entries.append({
+                'user_id': user_id,
+                'username': username,
+                'full_name': full_name,
+                'content': first_content,
+                'created_at': datetime.now(timezone.utc),
+            })
+
+        msg = {
+            'semester_id': semester_id,
+            'user_id': user_id,
+            'username': username,
+            'full_name': full_name,
+            'type': 'list',
+            'text': None,
+            'file': None,
+            'list_data': {'prompt': prompt, 'entries': entries},
+            'created_at': datetime.now(timezone.utc),
+        }
+        result = db.chat_messages.insert_one(msg)
+        msg['_id'] = result.inserted_id
+        payload = _serialize_message(msg, profile_picture)
+        socketio.emit('new_message', payload, to=semester_id)
+        return jsonify({'message': payload}), 201
+    except Exception as e:
+        logger.error(f'create_list_message error: {e}')
+        return jsonify({'error': 'Failed to create list'}), 500
+
+
+@chat_bp.route('/<semester_id>/lists/<message_id>/entries', methods=['POST'])
+@token_required
+def add_list_entry(semester_id, message_id):
+    """Any member appends an entry to an existing list message."""
+    from database import get_db
+    try:
+        data = request.get_json() or {}
+        user_id = request.user['user_id']
+        db = get_db()
+        if not _is_semester_member(db, semester_id, user_id):
+            return jsonify({'error': 'Not a member'}), 403
+
+        content = (data.get('content') or '').strip()
+        if not content:
+            return jsonify({'error': 'Content is required'}), 400
+
+        msg = _get_list_msg(db, semester_id, message_id)
+        if not msg:
+            return jsonify({'error': 'List not found'}), 404
+        if msg.get('deleted_for_everyone'):
+            return jsonify({'error': 'List has been deleted'}), 400
+
+        user_doc = db.users.find_one({'_id': ObjectId(user_id)}, {'fullName': 1, 'username': 1})
+        username = request.user.get('username', '')
+        full_name = (user_doc.get('fullName') or '') if user_doc else ''
+
+        entry = {
+            'user_id': user_id,
+            'username': username,
+            'full_name': full_name,
+            'content': content,
+            'created_at': datetime.now(timezone.utc),
+        }
+        db.chat_messages.update_one(
+            {'_id': ObjectId(message_id)},
+            {'$push': {'list_data.entries': entry}}
+        )
+        payload = _emit_list_updated(db, semester_id, message_id)
+        return jsonify({'message': payload}), 200
+    except Exception as e:
+        logger.error(f'add_list_entry error: {e}')
+        return jsonify({'error': 'Failed to add entry'}), 500
+
+
+@chat_bp.route('/<semester_id>/lists/<message_id>/entries/<int:entry_idx>', methods=['PUT'])
+@token_required
+def edit_list_entry(semester_id, message_id, entry_idx):
+    """Entry owner edits their own list entry."""
+    from database import get_db
+    try:
+        data = request.get_json() or {}
+        user_id = request.user['user_id']
+        db = get_db()
+        if not _is_semester_member(db, semester_id, user_id):
+            return jsonify({'error': 'Not a member'}), 403
+
+        new_content = (data.get('content') or '').strip()
+        if not new_content:
+            return jsonify({'error': 'Content is required'}), 400
+
+        msg = _get_list_msg(db, semester_id, message_id)
+        if not msg:
+            return jsonify({'error': 'List not found'}), 404
+        if msg.get('deleted_for_everyone'):
+            return jsonify({'error': 'List has been deleted'}), 400
+
+        entries = msg.get('list_data', {}).get('entries', [])
+        if entry_idx < 0 or entry_idx >= len(entries):
+            return jsonify({'error': 'Entry not found'}), 404
+        if entries[entry_idx].get('user_id') != user_id:
+            return jsonify({'error': 'Not authorized'}), 403
+
+        db.chat_messages.update_one(
+            {'_id': ObjectId(message_id)},
+            {'$set': {
+                f'list_data.entries.{entry_idx}.content': new_content,
+                f'list_data.entries.{entry_idx}.edited_at': datetime.now(timezone.utc),
+            }}
+        )
+        payload = _emit_list_updated(db, semester_id, message_id)
+        return jsonify({'message': payload}), 200
+    except Exception as e:
+        logger.error(f'edit_list_entry error: {e}')
+        return jsonify({'error': 'Failed to edit entry'}), 500
+
+
+@chat_bp.route('/<semester_id>/lists/<message_id>/entries/<int:entry_idx>', methods=['DELETE'])
+@token_required
+def delete_list_entry(semester_id, message_id, entry_idx):
+    """Entry owner (or CR/mod) deletes a list entry."""
+    from database import get_db
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+        if not _is_semester_member(db, semester_id, user_id):
+            return jsonify({'error': 'Not a member'}), 403
+
+        msg = _get_list_msg(db, semester_id, message_id)
+        if not msg:
+            return jsonify({'error': 'List not found'}), 404
+
+        entries = list(msg.get('list_data', {}).get('entries', []))
+        if entry_idx < 0 or entry_idx >= len(entries):
+            return jsonify({'error': 'Entry not found'}), 404
+        if entries[entry_idx].get('user_id') != user_id:
+            if not _is_cr_or_mod(db, semester_id, user_id):
+                return jsonify({'error': 'Not authorized'}), 403
+
+        entries.pop(entry_idx)
+        db.chat_messages.update_one(
+            {'_id': ObjectId(message_id)},
+            {'$set': {'list_data.entries': entries}}
+        )
+        payload = _emit_list_updated(db, semester_id, message_id)
+        return jsonify({'message': payload}), 200
+    except Exception as e:
+        logger.error(f'delete_list_entry error: {e}')
+        return jsonify({'error': 'Failed to delete entry'}), 500

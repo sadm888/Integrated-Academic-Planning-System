@@ -133,6 +133,7 @@ export const marksAPI = {
   analyticsFileUrl: (fileId) => fileUrl(`marks/analytics/file/${fileId}`),
   getTrend: (classroomId) => api.get(`/marks/trend/${classroomId}`),
   getSemesterAnalytics: (semesterId) => api.get(`/marks/semester-analytics/${semesterId}`),
+  getCrClassAverage: (semesterId) => api.get(`/marks/cr-class-average/${semesterId}`),
 };
 
 // Google Calendar endpoints
@@ -179,6 +180,11 @@ export const chatAPI = {
   closePoll: (semesterId, messageId) => api.post(`/chat/${semesterId}/polls/${messageId}/close`),
   reactToMessage: (semesterId, messageId, emoji) => api.post(`/chat/${semesterId}/messages/${messageId}/react`, { emoji }),
   getReadReceipts: (semesterId) => api.get(`/chat/${semesterId}/read-receipts`),
+  editMessage: (semesterId, messageId, text) => api.put(`/chat/${semesterId}/messages/${messageId}`, { text }),
+  createList: (semesterId, prompt, content = '') => api.post(`/chat/${semesterId}/lists`, { prompt, content }),
+  addListEntry: (semesterId, messageId, content) => api.post(`/chat/${semesterId}/lists/${messageId}/entries`, { content }),
+  editListEntry: (semesterId, messageId, entryIdx, content) => api.put(`/chat/${semesterId}/lists/${messageId}/entries/${entryIdx}`, { content }),
+  deleteListEntry: (semesterId, messageId, entryIdx) => api.delete(`/chat/${semesterId}/lists/${messageId}/entries/${entryIdx}`),
 };
 
 // Settings endpoints

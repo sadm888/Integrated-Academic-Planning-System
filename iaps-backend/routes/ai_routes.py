@@ -30,6 +30,7 @@ REST:
 """
 
 import os
+import re
 import json
 import shutil
 import logging
@@ -118,8 +119,12 @@ def _get_groq():
         with _groq_lock:
             if _groq_client is None:
                 from groq import Groq
-                from config import Config
-                key = Config.GROQ_API_KEY
+                # Read from os.getenv so a restart-free key swap works after
+                # the singleton is cleared on 401 auth failure.
+                key = os.getenv('GROQ_API_KEY', '')
+                if not key:
+                    from config import Config
+                    key = Config.GROQ_API_KEY or ''
                 if not key:
                     raise RuntimeError('GROQ_API_KEY is not configured')
                 _groq_client = Groq(api_key=key)
@@ -127,7 +132,8 @@ def _get_groq():
 
 
 def _groq_complete(messages: list, max_tokens: int = 1000,
-                   model: str = 'llama-3.3-70b-versatile', retries: int = 3) -> str:
+                   model: str = 'llama-3.3-70b-versatile', retries: int = 3,
+                   temperature: float = 0.7) -> str:
     """
     Centralized AI completion with automatic retry on rate-limits and auth-error recovery.
 
@@ -147,6 +153,7 @@ def _groq_complete(messages: list, max_tokens: int = 1000,
                 model=model,
                 messages=messages,
                 max_tokens=max_tokens,
+                temperature=temperature,
             ).choices[0].message.content
         except Exception as exc:
             err_str = str(exc).lower()
@@ -326,6 +333,17 @@ def _get_all_text(pdf_id: str, max_chars: int = 14000) -> str:
     return '\n\n'.join(_get_chunks(pdf_id))[:max_chars]
 
 
+def _get_full_text_from_db(pdf_id: str) -> str:
+    """Return the full ordered text stored during indexing, or empty string.
+    Falls back gracefully for PDFs indexed before this field was added."""
+    try:
+        from database import get_db
+        doc = get_db().ai_user_pdfs.find_one({'pdf_id': pdf_id}, {'full_text': 1})
+        return (doc or {}).get('full_text') or ''
+    except Exception:
+        return ''
+
+
 def _track_rag_metric(pdf_id: str, chunks_retrieved: int, latency_ms: float):
     """Persist a single RAG query metric (non-critical, fire-and-forget)."""
     try:
@@ -352,7 +370,6 @@ def _parse_json_response(raw: str):
 
 def _clean_prose(text: str) -> str:
     """Strip markdown formatting from LLM prose responses (not JSON)."""
-    import re
     text = text.replace('`', '').replace('***', '').replace('**', '').replace('__', '')
     return re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
 
@@ -367,6 +384,17 @@ def _index_pdf(path: str, pdf_id: str):
             doc  = fitz.open(path)
             text = '\n'.join(page.get_text() for page in doc)
             doc.close()
+
+            # Persist full ordered text so generation/grading can use it
+            # without relying on unordered ChromaDB chunk retrieval.
+            # Capped at 500k chars (~100k tokens) — covers any realistic PDF.
+            try:
+                get_db().ai_user_pdfs.update_one(
+                    {'pdf_id': pdf_id},
+                    {'$set': {'full_text': text[:500000]}},
+                )
+            except Exception:
+                pass  # non-critical
 
             words      = text.split()
             chunk_size = 400
@@ -836,33 +864,40 @@ def generate_quiz(pdf_id):
         return jsonify({'error': str(e)}), 403
 
     data          = request.get_json(force=True, silent=True) or {}
-    num_questions = max(1, min(int(data.get('num_questions', 10)), 50))
+    num_questions = max(1, min(int(data.get('num_questions', 10)), 20))
     types         = data.get('types', ['mcq', 'true_false', 'short']) or ['mcq']
     difficulty    = data.get('difficulty', 'mixed')
 
-    text = _get_all_text(pdf_id, max_chars=14000)
+    # ── Token-aware type balancing ─────────────────────────────────────────────
+    # Heavier types (short, fill_blank) produce longer JSON responses than light
+    # types (mcq, true_false, multi_mcq). When both coexist, reduce the heavy
+    # share so the total output stays within the token budget.
+    HEAVY = {'short', 'fill_blank'}
+    LIGHT = {'mcq', 'true_false', 'multi_mcq'}
+    heavy_types = [t for t in types if t in HEAVY]
+    light_types = [t for t in types if t in LIGHT]
+
+    if heavy_types and light_types:
+        # Give heavy types at most 30% of the total, rounded
+        heavy_count = max(1, round(num_questions * 0.30))
+        light_count = num_questions - heavy_count
+        type_dist = (
+            f"Generate exactly {light_count} questions of types {json.dumps(light_types)} "
+            f"and exactly {heavy_count} questions of types {json.dumps(heavy_types)}. "
+            f"Total must be exactly {num_questions}."
+        )
+    elif heavy_types:
+        # All heavy — allow up to 10 max to keep output small
+        num_questions = min(num_questions, 10)
+        type_dist = f"Generate exactly {num_questions} questions of types {json.dumps(heavy_types)}."
+    else:
+        type_dist = f"Generate exactly {num_questions} questions of types {json.dumps(light_types or types)}."
+    # ──────────────────────────────────────────────────────────────────────────
+
+    text = (_get_full_text_from_db(pdf_id) or _get_all_text(pdf_id, max_chars=18000))[:18000]
     if not text:
         return jsonify({'error': 'PDF not yet indexed.'}), 400
 
-    # Pass 1: extract deep conceptual structure from the document
-    analysis_prompt = f"""You are an expert educator analysing an academic document to prepare a quiz.
-
-Read this document carefully and extract:
-1. The 6-10 most important concepts, principles, or mechanisms (things a student MUST understand)
-2. Key cause-and-effect relationships (why things happen)
-3. Common misconceptions or tricky distinctions students confuse
-4. Any processes, algorithms, or step-by-step procedures
-5. Definitions that are subtle or nuanced
-
-Document:
-{text}
-
-Return a concise plain-text analysis (no JSON, no bullet points, just dense paragraphs). Focus on what would trip up a student who only memorised surface facts."""
-
-    analysis = _groq_complete(
-        [{'role': 'user', 'content': analysis_prompt}], max_tokens=800).strip()
-
-    # Pass 2: generate questions using both the raw text and the conceptual analysis
     diff_instruction = {
         'easy':   'All questions should be straightforward recall or basic understanding.',
         'medium': 'Mix recall with application and reasoning questions.',
@@ -870,39 +905,41 @@ Return a concise plain-text analysis (no JSON, no bullet points, just dense para
         'mixed':  'Distribute evenly: some recall (easy), some application (medium), some analysis/tricky (hard).',
     }.get(difficulty, 'Distribute across difficulty levels.')
 
-    types_str = ', '.join(types)
-    prompt = f"""You are an expert quiz writer. Using the document text AND the conceptual analysis below, generate exactly {num_questions} high-quality quiz questions.
+    prompt = f"""You are an expert quiz writer and educator. {type_dist}
 
-CONCEPTUAL ANALYSIS (use this to make questions test real understanding, not just memorisation):
-{analysis}
+Before writing questions, mentally identify:
+- The most important concepts, mechanisms, and cause-effect relationships
+- Common misconceptions students have
+- Definitions that are subtle or nuanced
 
-ORIGINAL DOCUMENT:
-{text[:8000]}
+DOCUMENT:
+{text}
 
-QUESTION QUALITY RULES (strictly follow these):
-- Do NOT ask trivial lookup questions ("What is X defined as?" is bad unless the definition is subtle)
-- DO ask "why", "how", "what would happen if", "which of these is NOT", scenario-based questions
-- For MCQ: distractors must be plausible — use common misconceptions or close-but-wrong alternatives
-- For short: ask questions that need a reasoned 1-2 sentence answer, not a one-word recall
-- For true_false: make the false statements subtly wrong, not obviously wrong
+QUESTION QUALITY RULES:
+- Do NOT ask trivial lookup questions — ask "why", "how", "what would happen if", scenario-based questions
+- For MCQ: use plausible distractors based on common misconceptions, not obviously wrong options
+- For short: require a reasoned 1-2 sentence answer, not one-word recall
+- For true_false: make false statements subtly wrong, not obviously wrong
 - NEVER use "All of the above", "None of the above", or "Both A and B" as options
 - Each question must test a DIFFERENT concept — no repetition
 - {diff_instruction}
 
 Return ONLY a valid JSON array. Each object must have:
 - "type": one of {json.dumps(types)}
-- "question": the question text (make it clear and specific)
+- "question": the question text
 - "options": array of 4 strings (mcq/true_false/multi_mcq only — true_false always ["True","False"])
 - "answer": correct answer string (mcq/true_false/fill_blank) or array of strings (multi_mcq)
-- "explanation": 2-sentence explanation — state WHY the answer is correct AND why the main distractor is wrong
+- "explanation": 2-sentence explanation — WHY the answer is correct AND why the main distractor is wrong
 - "topic": specific concept this question tests
 - "difficulty": "easy", "medium", or "hard"
 
 Return only the JSON array, no other text."""
 
     try:
+        # Scale output budget with question count to avoid truncation.
+        out_tokens = min(4000, num_questions * 160 + 300)
         questions = _parse_json_response(_groq_complete(
-            [{'role': 'user', 'content': prompt}], max_tokens=4000))
+            [{'role': 'user', 'content': prompt}], max_tokens=out_tokens))
         return jsonify({'questions': questions}), 200
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 503
@@ -928,7 +965,7 @@ def save_quiz_result(pdf_id):
     db.quiz_results.insert_one({
         'pdf_id':             pdf_id,
         'user_id':            user_id,
-        'score':              int(data.get('score', 0)),
+        'score':              float(data.get('score', 0)),
         'total':              int(data.get('total', 0)),
         'question_count':     int(data.get('question_count', 0)),
         'types_used':         data.get('types_used', []),
@@ -952,50 +989,163 @@ def grade_short_answers(pdf_id):
         return jsonify({'error': str(e)}), 403
 
     data    = request.get_json(force=True, silent=True) or {}
-    answers = data.get('answers', [])  # [{question, model_answer, student_answer, marks}]
+    answers = data.get('answers', [])  # [{question, model_answer, student_answer, marks, type}]
     if not answers:
         return jsonify({'grades': []}), 200
 
-    items_text = '\n'.join(
-        f"{i+1}. Question: {a['question']}\n   Model answer: {a.get('model_answer','')}\n   Student answer: {a.get('student_answer','')}\n   Max marks: {a.get('marks', 1)}"
-        for i, a in enumerate(answers)
-    )
+    # ── Grading rules injected into every prompt ──────────────────────────────
+    FILL_BLANK_RULES = """GRADING RULES for fill-in-the-blank:
+  FULL (1.0): same concept as correct answer in any form — different capitalisation, spelling, abbreviation, full form, synonym, or alternative name used in any textbook. The model answer is ONE valid form, not the only one.
+  PARTIAL (0.3–0.7): student describes/explains the correct concept correctly without naming it (shows understanding but forgot the term), OR blank has multiple parts and they got some. Do NOT give partial for a different specific named term — that is wrong, not partial.
+  ZERO (0.0): a different specific wrong answer, irrelevant, or blank."""
 
-    prompt = f"""You are an examiner grading student short/long answers. For each question below, compare the student's answer against the model answer and assign a score with partial marking.
+    SHORT_RULES = """GRADING RULES for short/long answer:
+  1.0 = fully correct — covers the key idea(s), including valid alternative explanations or different wording
+  0.7–0.9 = mostly correct, minor gaps
+  0.4–0.6 = partially correct — right area, missing significant points
+  0.1–0.3 = minimal relevant understanding
+  0.0 = blank, wrong, or off-topic
+  The model answer is ONE correct answer — accept any other correct explanation that the document supports."""
 
-{items_text}
+    def _build_item_text(idx, a):
+        q_type = (a.get('type') or 'short').lower()
+        rules  = FILL_BLANK_RULES if q_type == 'fill_blank' else SHORT_RULES
+        student = (a.get('student_answer') or '').strip()
+        if not student:
+            return None  # skip — handled as 0 below
+        return (
+            f"QUESTION {idx} (type: {q_type})\n"
+            f"Question: {a.get('question','')}\n"
+            f"Model answer: {a.get('model_answer','')}\n"
+            f"Student answer: {student}\n"
+            f"{rules}"
+        )
 
-Grading rules:
-- Score is a decimal between 0.0 and 1.0 (proportion of marks earned, e.g. 0.5 = half marks)
-- 1.0 = fully correct or covers all key points
-- 0.5–0.9 = partially correct — key idea present but missing details or minor errors
-- 0.1–0.4 = some relevant content but mostly wrong or very incomplete
-- 0.0 = completely wrong, blank, or irrelevant
-- Grade on correctness of concepts, not exact wording
-- Provide brief feedback (1 sentence) explaining the score
+    def _parse_batch(raw, n):
+        """Parse a JSON array response; return list of grade dicts."""
+        result = _parse_json_response(raw)
+        if not isinstance(result, list):
+            raise ValueError('Expected JSON array')
+        for g in result:
+            g['score'] = max(0.0, min(1.0, float(g.get('score', 0))))
+        return result
 
-Return ONLY a valid JSON array with exactly {len(answers)} objects, each:
-{{"index": 0, "score": 0.75, "feedback": "Correct concept but missed the key mechanism."}}
+    def _batch_grade(full_doc: str) -> list:
+        """Single API call: grade all answers with the full document as authoritative context.
+        Returns list in same order as answers; raises on failure."""
+        items = []
+        zero_indices = []
+        for i, a in enumerate(answers):
+            txt = _build_item_text(i, a)
+            if txt is None:
+                zero_indices.append(i)
+            else:
+                items.append((i, txt))
 
-Return only the JSON array."""
+        grades = [None] * len(answers)
+        for zi in zero_indices:
+            grades[zi] = {'index': zi, 'score': 0.0, 'feedback': 'No answer provided.'}
+
+        if not items:
+            return grades
+
+        items_block = '\n\n---\n\n'.join(txt for _, txt in items)
+        n_items = len(items)
+        system_msg = (
+            "You are an expert examiner. The following is the FULL source document the quiz was generated from. "
+            "Use it as the authoritative source of truth when grading — judge what is correct based on the document, "
+            "not just the provided model answer. The model answer is one valid answer, not the only one.\n\n"
+            f"SOURCE DOCUMENT:\n{full_doc}"
+        )
+        user_msg = (
+            f"Grade the following {n_items} student answers. "
+            "Return ONLY a valid JSON array with exactly "
+            f"{n_items} objects, each: "
+            '{"index": <original_index>, "score": <0.0-1.0>, "feedback": "<one sentence>"}. '
+            "Preserve the original index numbers exactly.\n\n"
+            f"{items_block}"
+        )
+        raw = _groq_complete(
+            [{'role': 'system', 'content': system_msg},
+             {'role': 'user',   'content': user_msg}],
+            max_tokens=150 * n_items + 100,
+            temperature=0.0,
+        )
+        batch_results = _parse_batch(raw, n_items)
+        # Map results back by their index field
+        idx_map = {g['index']: g for g in batch_results}
+        for orig_i, _ in items:
+            g = idx_map.get(orig_i)
+            if g:
+                grades[orig_i] = g
+            else:
+                grades[orig_i] = {'index': orig_i, 'score': 0.0, 'feedback': 'Grading unavailable.'}
+        return grades
+
+    def _rag_context(question, model_ans):
+        try:
+            chunks = _hybrid_rag(pdf_id, f"{question} {model_ans}", n=5)
+            return '\n\n'.join(chunks) if chunks else ''
+        except Exception:
+            return ''
+
+    def _grade_one_rag(idx, a):
+        """Per-question RAG fallback when full-text batch is unavailable."""
+        q_type    = (a.get('type') or 'short').lower()
+        question  = a.get('question', '')
+        model_ans = a.get('model_answer', '')
+        student   = (a.get('student_answer') or '').strip()
+        if not student:
+            return {'index': idx, 'score': 0.0, 'feedback': 'No answer provided.'}
+
+        ctx = _rag_context(question, model_ans)
+        ctx_block = f"\n\nSource document excerpt:\n{ctx}" if ctx else ''
+        rules = FILL_BLANK_RULES if q_type == 'fill_blank' else SHORT_RULES
+
+        prompt = (
+            f"You are an examiner. Grade this student answer.\n\n"
+            f"Question: {question}\nModel answer: {model_ans}\n"
+            f"Student answer: {student}{ctx_block}\n\n{rules}\n\n"
+            f'Return ONLY: {{"index": {idx}, "score": <0.0-1.0>, "feedback": "<one sentence>"}}'
+        )
+        raw = _groq_complete(
+            [{'role': 'user', 'content': prompt}],
+            max_tokens=150, temperature=0.0,
+        )
+        result = _parse_json_response(raw)
+        result['index'] = idx
+        result['score'] = max(0.0, min(1.0, float(result.get('score', 0))))
+        return result
+
+    # ── Try full-text batch first; fall back to per-question RAG ─────────────
+    full_text = (_get_full_text_from_db(pdf_id) or _get_all_text(pdf_id, max_chars=60000))[:60000]
+    grades = []
+    if full_text:
+        try:
+            grades = _batch_grade(full_text)
+        except Exception as e:
+            logger.warning(f'Batch grading failed ({e}), falling back to per-question RAG')
+            grades = []
+
+    if not grades or len(grades) != len(answers):
+        grades = []
+        for i, a in enumerate(answers):
+            try:
+                grades.append(_grade_one_rag(i, a))
+            except Exception as e:
+                logger.warning(f'Grading item {i} failed: {e}')
+                grades.append({'index': i, 'score': 0.0, 'feedback': 'Grading unavailable.'})
 
     try:
-        grades = _parse_json_response(_groq_complete(
-            [{'role': 'user', 'content': prompt}], max_tokens=800))
-        # Persist grades so performance analytics can track short-answer scores
-        try:
-            db.quiz_grades.insert_one({
-                'pdf_id':     pdf_id,
-                'user_id':    user_id,
-                'grades':     grades,
-                'created_at': datetime.now(timezone.utc),
-            })
-        except Exception:
-            pass
-        return jsonify({'grades': grades}), 200
-    except Exception as e:
-        logger.error(f"Grading error: {e}")
-        return jsonify({'error': 'Failed to grade answers'}), 500
+        db.quiz_grades.insert_one({
+            'pdf_id':     pdf_id,
+            'user_id':    user_id,
+            'grades':     grades,
+            'created_at': datetime.now(timezone.utc),
+        })
+    except Exception:
+        pass
+    return jsonify({'grades': grades}), 200
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1016,48 +1166,30 @@ def generate_flashcards(pdf_id):
     data      = request.get_json(force=True, silent=True) or {}
     num_cards = max(1, min(int(data.get('num_cards', 20)), 40))
 
-    text = _get_all_text(pdf_id, max_chars=14000)
+    text = (_get_full_text_from_db(pdf_id) or _get_all_text(pdf_id, max_chars=18000))[:18000]
     if not text:
         return jsonify({'error': 'PDF not yet indexed.'}), 400
 
-    # Pass 1: identify what's actually worth memorising
-    analysis_prompt = f"""You are an expert educator preparing flashcards for a student.
-
-Read this document and identify:
-1. Core concepts the student must be able to define AND explain (not just name)
-2. Cause-and-effect relationships and the reasoning behind them
-3. Processes or procedures with the logic of each step
-4. Subtle distinctions students commonly confuse (e.g. X vs Y)
-5. Formulas, rules, or conditions — including when they apply and when they don't
-6. "Why" knowledge: not just what something is, but why it works that way
-
-Document:
-{text}
-
-Write a concise plain-text analysis listing all the above. Be specific — name the actual concepts, not generic categories."""
-
-    analysis = _groq_complete(
-        [{'role': 'user', 'content': analysis_prompt}], max_tokens=700).strip()
-
     prompt = f"""You are an expert educator creating high-quality spaced-repetition flashcards.
 
-Using the conceptual analysis AND the original document, generate exactly {num_cards} flashcards.
+Before writing cards, mentally identify:
+- Core concepts the student must define AND explain
+- Cause-and-effect relationships and the reasoning behind them
+- Subtle distinctions students commonly confuse (X vs Y)
+- Formulas, rules, or conditions — when they apply and when they don't
+- "Why" knowledge: not just what something is, but why it works that way
 
-CONCEPTUAL ANALYSIS:
-{analysis}
-
-ORIGINAL DOCUMENT:
-{text[:8000]}
+DOCUMENT:
+{text}
 
 FLASHCARD QUALITY RULES:
-- Front: ask a question that prompts RECALL and REASONING, not just recognition. Use "Why", "How", "What happens when", "What is the difference between X and Y", not just "Define X"
-- Back: give a complete, self-contained answer. For explanations, include the mechanism or reason — not just the fact. Max 70 words.
-- Cover every major concept from the analysis — no concept should appear twice
+- Front: prompt RECALL and REASONING — use "Why", "How", "What happens when", "Difference between X and Y", not just "Define X"
+- Back: complete, self-contained answer including the mechanism or reason. Max 70 words.
+- Each card tests a DIFFERENT concept — no repetition
 - Mix card types: definitions, comparisons, cause-effect, process steps, application scenarios
 - Make the front specific enough that there is only ONE correct answer
-- For formulas/rules: the front should ask when/why to use it, not just what it is
 
-Return ONLY a valid JSON array. Each object must have:
+Generate exactly {num_cards} flashcards. Return ONLY a valid JSON array. Each object must have:
 - "front": question (max 25 words)
 - "back": answer with brief reasoning where relevant (max 70 words)
 - "topic": the concept this card covers (2-4 words)
@@ -1308,27 +1440,25 @@ def generate_mock_test(pdf_id):
         return jsonify({'error': str(e)}), 403
 
     data             = request.get_json(force=True, silent=True) or {}
-    num_questions    = max(5, min(int(data.get('num_questions', 10)), 50))
+    num_questions    = max(5, min(int(data.get('num_questions', 10)), 20))
     marks_each       = max(1, int(data.get('marks_each', 1)))
     negative_marking = bool(data.get('negative_marking', False))
     negative_fraction = float(data.get('negative_fraction', 0.25))
     duration_minutes = max(5, int(data.get('duration_minutes', 30)))
 
-    text = _get_all_text(pdf_id, max_chars=14000)
+    text = (_get_full_text_from_db(pdf_id) or _get_all_text(pdf_id, max_chars=18000))[:18000]
     if not text:
         return jsonify({'error': 'PDF not yet indexed.'}), 400
 
-    analysis = _groq_complete(
-        [{'role': 'user', 'content': f"Analyse this academic document. List the key concepts, mechanisms, cause-effect relationships, and common misconceptions a student must understand. Be specific and concise.\n\n{text}"}],
-        max_tokens=600).strip()
+    prompt = f"""You are an expert exam paper setter. Generate exactly {num_questions} high-quality exam questions from the academic document below.
 
-    prompt = f"""Generate exactly {num_questions} high-quality exam questions (mix of MCQ and short answer) using this document and analysis.
-
-CONCEPTUAL ANALYSIS:
-{analysis}
+Before writing questions, mentally identify:
+- Key concepts, mechanisms, and cause-effect relationships
+- Common misconceptions students have
+- Topics that require analysis, not just recall
 
 DOCUMENT:
-{text[:8000]}
+{text}
 
 Rules:
 - MCQ: plausible distractors based on misconceptions, NEVER "all/none of the above"
@@ -1348,8 +1478,9 @@ Return ONLY a valid JSON array. Each object must have:
 Return only the JSON array, no other text."""
 
     try:
+        out_tokens = min(4000, num_questions * 180 + 300)
         questions = _parse_json_response(_groq_complete(
-            [{'role': 'user', 'content': prompt}], max_tokens=4000))
+            [{'role': 'user', 'content': prompt}], max_tokens=out_tokens))
         config = {
             'marks_each':        marks_each,
             'negative_marking':  negative_marking,

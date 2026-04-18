@@ -200,11 +200,12 @@ class TestQuizGenerate:
     def test_success_returns_questions(self, client, registered_user, db):
         user, token = registered_user
         _insert_pdf(db, str(user['_id']))
-        fake_quiz = json.dumps({'analysis': 'deep', 'questions': [
-            {'question': 'Q1?', 'type': 'mcq', 'options': ['A','B','C','D'], 'answer': 'A', 'difficulty': 'easy'},
-        ]})
+        fake_quiz = json.dumps([
+            {'question': 'Q1?', 'type': 'mcq', 'options': ['A', 'B', 'C', 'D'],
+             'answer': 'A', 'explanation': 'Because A.', 'topic': 'Kinematics', 'difficulty': 'easy'},
+        ])
 
-        with patch('routes.ai_routes._rag_search', return_value={'documents': [['chunk']], 'metadatas': [[]]}), \
+        with patch('routes.ai_routes._get_full_text_from_db', return_value='chunk text'), \
              patch('routes.ai_routes._get_all_text', return_value='chunk text'), \
              patch('routes.ai_routes._get_groq', return_value=_groq_mock(fake_quiz)):
             resp = client.post('/api/ai/pdf/test-pdf-123/quiz/generate',
@@ -212,20 +213,18 @@ class TestQuizGenerate:
                                json={'num_questions': 1, 'types': ['mcq']})
 
         assert resp.status_code == 200
-        data = resp.get_json()
-        # Route may return {questions: [...]} or the full analysis object
-        raw_q = data.get('questions', data)
-        if isinstance(raw_q, dict):
-            raw_q = raw_q.get('questions', [])
-        assert isinstance(raw_q, list)
+        questions = resp.get_json()['questions']
+        assert isinstance(questions, list)
+        assert len(questions) == 1
+        assert questions[0]['type'] == 'mcq'
 
-    def test_num_questions_clamped_to_50(self, client, registered_user, db):
-        """num_questions > 50 should be silently clamped, not error."""
+    def test_num_questions_clamped_to_20(self, client, registered_user, db):
+        """num_questions > 20 is silently clamped to 20, not an error."""
         user, token = registered_user
         _insert_pdf(db, str(user['_id']))
-        fake_quiz = json.dumps({'analysis': '', 'questions': []})
+        fake_quiz = json.dumps([])
 
-        with patch('routes.ai_routes._rag_search', return_value={'documents': [['chunk']], 'metadatas': [[]]}), \
+        with patch('routes.ai_routes._get_full_text_from_db', return_value='chunk text'), \
              patch('routes.ai_routes._get_all_text', return_value='chunk text'), \
              patch('routes.ai_routes._get_groq', return_value=_groq_mock(fake_quiz)):
             resp = client.post('/api/ai/pdf/test-pdf-123/quiz/generate',
@@ -272,7 +271,8 @@ class TestGradeQuiz:
         _insert_pdf(db, str(user['_id']))
         fake_grades = json.dumps([{'index': 0, 'score': 0.8, 'feedback': 'Good answer'}])
 
-        with patch('routes.ai_routes._get_groq', return_value=_groq_mock(fake_grades)):
+        with patch('routes.ai_routes._get_full_text_from_db', return_value='full document text'), \
+             patch('routes.ai_routes._get_groq', return_value=_groq_mock(fake_grades)):
             resp = client.post('/api/ai/pdf/test-pdf-123/quiz/grade',
                                headers=auth_header(token),
                                json={'answers': [{'question': 'Q?', 'model_answer': 'A',
@@ -441,7 +441,8 @@ class TestFlashcardGenerate:
         user, token = registered_user
         _insert_pdf(db, str(user['_id']))
 
-        with patch('routes.ai_routes._get_all_text', return_value=''):
+        with patch('routes.ai_routes._get_full_text_from_db', return_value=''), \
+             patch('routes.ai_routes._get_all_text', return_value=''):
             resp = client.post('/api/ai/pdf/test-pdf-123/flashcards/generate',
                                headers=auth_header(token))
         assert resp.status_code == 400
@@ -453,7 +454,8 @@ class TestFlashcardGenerate:
             {'front': 'What is F = ma?', 'back': 'Newtons second law'},
         ])
 
-        with patch('routes.ai_routes._get_all_text', return_value='physics text'), \
+        with patch('routes.ai_routes._get_full_text_from_db', return_value='physics text'), \
+             patch('routes.ai_routes._get_all_text', return_value='physics text'), \
              patch('routes.ai_routes._get_groq', return_value=_groq_mock(fake_cards)):
             resp = client.post('/api/ai/pdf/test-pdf-123/flashcards/generate',
                                headers=auth_header(token))
@@ -703,7 +705,8 @@ class TestMockTest:
         user, token = registered_user
         _insert_pdf(db, str(user['_id']))
 
-        with patch('routes.ai_routes._get_all_text', return_value=''):
+        with patch('routes.ai_routes._get_full_text_from_db', return_value=''), \
+             patch('routes.ai_routes._get_all_text', return_value=''):
             resp = client.post('/api/ai/pdf/test-pdf-123/mock-test/generate',
                                headers=auth_header(token), json={})
         assert resp.status_code == 400
@@ -711,13 +714,13 @@ class TestMockTest:
     def test_success_returns_test_with_questions(self, client, registered_user, db):
         user, token = registered_user
         _insert_pdf(db, str(user['_id']))
-        # Endpoint expects the LLM to return a JSON array of question objects
         fake_questions = json.dumps([
             {'question': 'Q1?', 'type': 'mcq', 'options': ['A', 'B', 'C', 'D'],
              'answer': 'A', 'difficulty': 'medium', 'topic': 'Mechanics', 'model_answer': 'A'},
         ])
 
-        with patch('routes.ai_routes._get_all_text', return_value='exam content'), \
+        with patch('routes.ai_routes._get_full_text_from_db', return_value='exam content'), \
+             patch('routes.ai_routes._get_all_text', return_value='exam content'), \
              patch('routes.ai_routes._get_groq', return_value=_groq_mock(fake_questions)):
             resp = client.post('/api/ai/pdf/test-pdf-123/mock-test/generate',
                                headers=auth_header(token),
@@ -868,3 +871,89 @@ class TestAiResultCache:
         assert resp.status_code == 200
         plan = resp.get_json()['plan']
         assert 'days' in plan
+
+
+# ── TestGradeQuizEdgeCases ────────────────────────────────────────────────────
+
+class TestGradeQuizEdgeCases:
+    """Edge cases for the batch grading flow."""
+
+    def test_blank_student_answer_gets_zero(self, client, registered_user, db):
+        user, token = registered_user
+        _insert_pdf(db, str(user['_id']))
+
+        with patch('routes.ai_routes._get_groq') as mock_groq:
+            resp = client.post('/api/ai/pdf/test-pdf-123/quiz/grade',
+                               headers=auth_header(token),
+                               json={'answers': [
+                                   {'question': 'Q?', 'model_answer': 'A',
+                                    'student_answer': '', 'marks': 1, 'type': 'fill_blank'},
+                               ]})
+        assert resp.status_code == 200
+        grade = resp.get_json()['grades'][0]
+        assert grade['score'] == 0.0
+        assert 'No answer' in grade['feedback']
+
+    def test_batch_grade_incomplete_response_defaults_missing(self, client, registered_user, db):
+        """AI returns only index=0; index=1 must default to 0.0 (not crash or stay None)."""
+        user, token = registered_user
+        _insert_pdf(db, str(user['_id']))
+        partial_response = json.dumps([{'index': 0, 'score': 0.9, 'feedback': 'Good'}])
+
+        with patch('routes.ai_routes._get_full_text_from_db', return_value='full doc text'), \
+             patch('routes.ai_routes._get_groq', return_value=_groq_mock(partial_response)):
+            resp = client.post('/api/ai/pdf/test-pdf-123/quiz/grade',
+                               headers=auth_header(token),
+                               json={'answers': [
+                                   {'question': 'Q1?', 'model_answer': 'A1',
+                                    'student_answer': 'student A1', 'marks': 1, 'type': 'short'},
+                                   {'question': 'Q2?', 'model_answer': 'A2',
+                                    'student_answer': 'student A2', 'marks': 1, 'type': 'short'},
+                               ]})
+        assert resp.status_code == 200
+        grades = resp.get_json()['grades']
+        assert len(grades) == 2
+        assert grades[0]['score'] == 0.9
+        assert grades[1]['score'] == 0.0
+
+    def test_score_clamped_to_0_1(self, client, registered_user, db):
+        user, token = registered_user
+        _insert_pdf(db, str(user['_id']))
+        bad_scores = json.dumps([{'index': 0, 'score': 1.5, 'feedback': 'Too high'}])
+
+        with patch('routes.ai_routes._get_full_text_from_db', return_value='doc'), \
+             patch('routes.ai_routes._get_groq', return_value=_groq_mock(bad_scores)):
+            resp = client.post('/api/ai/pdf/test-pdf-123/quiz/grade',
+                               headers=auth_header(token),
+                               json={'answers': [
+                                   {'question': 'Q?', 'model_answer': 'A',
+                                    'student_answer': 'answer', 'marks': 1, 'type': 'short'},
+                               ]})
+        assert resp.status_code == 200
+        assert resp.get_json()['grades'][0]['score'] <= 1.0
+
+    def test_fill_blank_rubric_sent_to_ai(self, client, registered_user, db):
+        """fill_blank type must use the fill-blank rubric (not the short-answer one)."""
+        user, token = registered_user
+        _insert_pdf(db, str(user['_id']))
+        fake_grade = json.dumps([{'index': 0, 'score': 1.0, 'feedback': 'Correct'}])
+        captured_msgs = []
+
+        def _capture(messages, **kwargs):
+            captured_msgs.extend(messages)
+            return fake_grade
+
+        with patch('routes.ai_routes._get_full_text_from_db', return_value='doc'), \
+             patch('routes.ai_routes._groq_complete', side_effect=_capture):
+            client.post('/api/ai/pdf/test-pdf-123/quiz/grade',
+                        headers=auth_header(token),
+                        json={'answers': [
+                            {'question': 'Q?', 'model_answer': 'DiffServ',
+                             'student_answer': 'Differentiated Services',
+                             'marks': 1, 'type': 'fill_blank'},
+                        ]})
+        all_text = ' '.join(
+            m.get('content', '') for m in captured_msgs
+            if isinstance(m.get('content'), str)
+        )
+        assert 'FULL (1.0)' in all_text

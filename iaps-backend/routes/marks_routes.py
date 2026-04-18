@@ -585,6 +585,50 @@ def get_semester_analytics(semester_id):
         return jsonify({'error': 'Failed to fetch semester analytics'}), 500
 
 
+@marks_bp.route('/cr-class-average/<semester_id>', methods=['GET'])
+@token_required
+def get_cr_class_average(semester_id):
+    """CR-only: per-subject class-average score across all students for this semester."""
+    from database import get_db
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+
+        semester = db.semesters.find_one({'_id': ObjectId(semester_id)})
+        if not semester:
+            return jsonify({'error': 'Semester not found'}), 404
+
+        classroom = db.classrooms.find_one({'_id': ObjectId(semester['classroom_id'])})
+        if not classroom or not is_member_of_classroom(classroom, user_id):
+            return jsonify({'error': 'Access denied'}), 403
+
+        if user_id not in [str(c) for c in semester.get('cr_ids', [])]:
+            return jsonify({'error': 'CR access required'}), 403
+
+        subjects = list(db.subjects.find(
+            {'semester_id': semester_id, 'classroom_id': semester['classroom_id']},
+            {'_id': 1, 'name': 1},
+        ))
+
+        result = []
+        for sub in subjects:
+            sub_id = str(sub['_id'])
+            all_marks = list(db.subject_marks.find({'subject_id': sub_id}, {'entries': 1}))
+            scores = [_compute_weighted_score(m.get('entries', [])) for m in all_marks]
+            scored = [s for s in scores if s is not None]
+            result.append({
+                'subject_id': sub_id,
+                'name': sub['name'],
+                'class_avg': round(sum(scored) / len(scored), 2) if scored else None,
+                'count': len(scored),
+            })
+
+        return jsonify({'subjects': result}), 200
+    except Exception as e:
+        logger.error(f"CR class average error: {e}")
+        return jsonify({'error': 'Failed to fetch class average'}), 500
+
+
 @marks_bp.route('/analytics/file/<file_id>', methods=['GET'])
 def serve_analytics_file(file_id):
     """Serve analytics file. Auth via ?token= query param."""

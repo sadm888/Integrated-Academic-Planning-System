@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import SemesterSubnav from '../components/SemesterSubnav';
 import { semesterAPI } from '../services/api';
 import '../styles/Classroom.css';

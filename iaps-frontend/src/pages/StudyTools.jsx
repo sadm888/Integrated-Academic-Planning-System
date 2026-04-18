@@ -23,15 +23,18 @@ const c = {
   textPri:   'var(--text-primary)',
   textSec:   'var(--text-secondary)',
   accent:    '#667eea',
-  success:   '#10b981',
-  successBg: '#d1fae5',
-  successFg: '#065f46',
-  warning:   '#f59e0b',
-  warningBg: '#fef3c7',
-  warningFg: '#92400e',
-  danger:    '#ef4444',
-  dangerBg:  '#fee2e2',
-  dangerFg:  '#dc2626',
+  success:        '#10b981',
+  successBg:      '#d1fae5',
+  successBgAlpha: 'rgba(16,185,129,0.15)',   // dark-mode-safe tint
+  successFg:      '#065f46',
+  warning:        '#f59e0b',
+  warningBg:      '#fef3c7',
+  warningBgAlpha: 'rgba(245,158,11,0.15)',
+  warningFg:      '#92400e',
+  danger:         '#ef4444',
+  dangerBg:       '#fee2e2',
+  dangerBgAlpha:  'rgba(239,68,68,0.15)',
+  dangerFg:       '#dc2626',
   info:      '#0369a1',
   infoBg:    '#f0f9ff',
   infoBorder:'#bae6fd',
@@ -73,7 +76,7 @@ const TABS = [
   { key: 'performance', label: 'Performance',  Icon: BarChart2    },
 ];
 
-const QUIZ_TYPES = { mcq: 'MCQ', multi_mcq: 'Multi-MCQ', true_false: 'True/False', fill_blank: 'Fill Blank', short: 'Short' };
+const QUIZ_TYPES = { mcq: 'MCQ', multi_mcq: 'Multi-MCQ', true_false: 'True/False', fill_blank: 'Fill Blank', short: 'Short Answer' };
 
 function MsgBubble({ msg, accent, textPri, textSec }) {
   const [copied,   setCopied]   = useState(false);
@@ -166,7 +169,17 @@ export default function StudyTools() {
   const loadPdfs = useCallback(() => {
     setLoading(true);
     aiAPI.listPdfs()
-      .then(r => setPdfs(r.data.pdfs ?? []))
+      .then(r => {
+        const list = r.data.pdfs ?? [];
+        setPdfs(list);
+        setSelected(cur => {
+          if (cur && !list.find(p => p.pdf_id === cur)) {
+            sessionStorage.removeItem('st_pdf');
+            return null;
+          }
+          return cur;
+        });
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -218,6 +231,15 @@ export default function StudyTools() {
                     <Loader size={11} style={{ ...spin, verticalAlign: 'middle', marginRight: '3px' }} />Indexing…
                   </span>
                 )}
+                <button
+                  onClick={() => pickPdf(null)}
+                  title="Deselect document"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: c.textSec, padding: '2px', display: 'flex', alignItems: 'center', flexShrink: 0, borderRadius: '4px', opacity: 0.6 }}
+                  onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                  onMouseLeave={e => e.currentTarget.style.opacity = '0.6'}
+                >
+                  <X size={15} />
+                </button>
               </div>
 
               {/* Tab content — all mounted, hidden via display:none so state persists */}
@@ -749,21 +771,22 @@ function ChatTab({ pdfId }) {
 
 function QuizTab({ pdfId, onWeakTopics, goToPlanner }) {
   const [phase,     setPhase]     = useState('config');
-  const [config,    setConfig]    = useState({ num_questions: 10, types: ['mcq', 'true_false'], difficulty: 'mixed' });
+  const [config,    setConfig]    = useState({ num_questions: 10, types: ['mcq'], difficulty: 'mixed' });
   const [questions, setQuestions] = useState([]);
   const [current,   setCurrent]   = useState(0);
-  const [answers,   setAnswers]   = useState({});
-  const [loading,   setLoading]   = useState(false);
-  const [error,     setError]     = useState('');
-  const [aiGrades,  setAiGrades]  = useState(null);
-  const [grading,   setGrading]   = useState(false);
+  const [answers,      setAnswers]      = useState({});
+  const [loading,      setLoading]      = useState(false);
+  const [error,        setError]        = useState('');
+  const [aiGrades,     setAiGrades]     = useState(null);
+  const [grading,      setGrading]      = useState(false);
+  const [gradingError, setGradingError] = useState(false);
 
   const toggleType = t =>
     setConfig(c => ({ ...c, types: c.types.includes(t) ? c.types.filter(x => x !== t) : [...c.types, t] }));
 
   const generate = async () => {
     if (!config.types.length) { setError('Select at least one question type'); return; }
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setGradingError(false);
     try {
       const r = await aiAPI.generateQuiz(pdfId, config);
       setQuestions(r.data.questions ?? []);
@@ -776,7 +799,7 @@ function QuizTab({ pdfId, onWeakTopics, goToPlanner }) {
     let correct = 0;
     questions.forEach((q, i) => {
       const a = answers[i];
-      if (q.type === 'short') return;
+      if (isAiGraded(q.type)) return;
       if (q.type === 'multi_mcq') {
         const ans = Array.isArray(q.answer) ? q.answer : [q.answer];
         const given = Array.isArray(a) ? a : [];
@@ -792,28 +815,31 @@ function QuizTab({ pdfId, onWeakTopics, goToPlanner }) {
     setPhase('results');
     const shortQs = questions
       .map((q, i) => ({ ...q, idx: i }))
-      .filter(q => q.type === 'short' || q.type === 'fill_blank');
+      .filter(q => isAiGraded(q.type));
+    let gradeMap = {};
     if (shortQs.length > 0) {
       setGrading(true);
+      setGradingError(false);
       try {
         const payload = shortQs.map(q => ({
           question: q.question,
           model_answer: q.answer || q.model_answer || '',
           student_answer: answers[q.idx] || '',
           marks: 1,
+          type: q.type,
         }));
         const r = await aiAPI.gradeQuiz(pdfId, payload);
-        const gradeMap = {};
         (r.data.grades || []).forEach((g, i) => { gradeMap[shortQs[i].idx] = g; });
         setAiGrades(gradeMap);
-      } catch { /* grading failed silently */ }
+      } catch { setGradingError(true); }
       finally { setGrading(false); }
     }
-    const s = calcScore();
-    const auto = questions.filter(q => q.type !== 'short' && q.type !== 'fill_blank').length;
+    const autoScore = calcScore();
+    const aiScore = Object.values(gradeMap).reduce((sum, g) => sum + (g.score || 0), 0);
+    const totalScore = parseFloat((autoScore + aiScore).toFixed(2));
     const weakTopics = questions.filter((q, i) => {
       const a = answers[i];
-      if (q.type === 'short' || q.type === 'fill_blank') return false;
+      if (isAiGraded(q.type)) return (gradeMap[i]?.score ?? 0) < 0.5;
       if (q.type === 'multi_mcq') {
         const ans = Array.isArray(q.answer) ? q.answer : [q.answer];
         const given = Array.isArray(a) ? a : [];
@@ -822,7 +848,7 @@ function QuizTab({ pdfId, onWeakTopics, goToPlanner }) {
       return String(a ?? '').trim().toLowerCase() !== String(q.answer).trim().toLowerCase();
     }).map(q => q.topic).filter(Boolean);
     const uniqueWeak = [...new Set(weakTopics)];
-    aiAPI.saveQuizResult(pdfId, { score: s, total: auto, question_count: questions.length, types_used: config.types, weak_topics: uniqueWeak }).catch(() => {});
+    aiAPI.saveQuizResult(pdfId, { score: totalScore, total: questions.length, question_count: questions.length, types_used: config.types, weak_topics: uniqueWeak }).catch(() => {});
     if (onWeakTopics) onWeakTopics(uniqueWeak);
   };
 
@@ -833,9 +859,9 @@ function QuizTab({ pdfId, onWeakTopics, goToPlanner }) {
         <SecTitle>Quiz Settings</SecTitle>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '14px' }}>
           <div>
-            <label style={lab}>Questions</label>
-            <input type="number" min={1} max={50} value={config.num_questions}
-              onChange={e => setConfig(c => ({ ...c, num_questions: Math.min(50, Math.max(1, +e.target.value)) }))}
+            <label style={lab}>Questions (max 20)</label>
+            <input type="number" min={1} max={20} value={config.num_questions}
+              onChange={e => setConfig(c => ({ ...c, num_questions: Math.min(20, Math.max(1, +e.target.value)) }))}
               style={{ ...inp, width: '100%', boxSizing: 'border-box' }} />
           </div>
           <div>
@@ -893,7 +919,6 @@ function QuizTab({ pdfId, onWeakTopics, goToPlanner }) {
   }
 
   const finalScore = calcScore();
-  const autoGraded = questions.filter(q => q.type !== 'short' && q.type !== 'fill_blank').length;
   const aiScore = aiGrades ? Object.values(aiGrades).reduce((s, g) => s + (g.score || 0), 0) : 0;
   const totalQ = questions.length;
   const totalScore = parseFloat((finalScore + aiScore).toFixed(2));
@@ -905,9 +930,10 @@ function QuizTab({ pdfId, onWeakTopics, goToPlanner }) {
           {totalScore}/{totalQ}
         </div>
         <p style={{ color: c.textSec, fontSize: '14px', margin: '4px 0 4px' }}>{pct}%</p>
-        {grading && <p style={{ color: c.textSec, fontSize: '12px', margin: '0 0 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><Loader size={12} style={spin} /> AI grading short answers…</p>}
+        {grading && <p style={{ color: c.textSec, fontSize: '12px', margin: '0 0 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><Loader size={12} style={spin} /> AI grading answers…</p>}
+        {gradingError && <p style={{ color: c.danger, fontSize: '12px', margin: '0 0 12px' }}>AI grading failed — fill blank and short answer scores shown as 0. Try again.</p>}
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button onClick={() => { setPhase('config'); setQuestions([]); setAiGrades(null); }} style={btn('primary')}><RefreshCw size={14} /> New Quiz</button>
+          <button onClick={() => { setPhase('config'); setQuestions([]); setAiGrades(null); setGradingError(false); }} style={btn('primary')}><RefreshCw size={14} /> New Quiz</button>
           {goToPlanner && pct < 100 && (
             <button onClick={goToPlanner} style={btn('ghost')}><CalendarDays size={14} /> Study Weak Topics</button>
           )}
@@ -937,12 +963,12 @@ function QuizTab({ pdfId, onWeakTopics, goToPlanner }) {
                 <p style={{ margin: '0 0 6px', fontWeight: 600, fontSize: '14px', color: c.textPri }}>{q.question}</p>
                 {given != null && <p style={{ margin: '0 0 4px', fontSize: '13px', color: c.textSec }}>Your: <strong style={{ color: c.textPri }}>{Array.isArray(given) ? given.join(', ') : String(given)}</strong></p>}
                 {isShort && aiG && (
-                  <div style={{ margin: '6px 0 0', padding: '8px 12px', borderRadius: '8px', background: aiG.score >= 0.8 ? '#d1fae5' : aiG.score >= 0.4 ? '#fef3c7' : '#fee2e2', fontSize: '12px' }}>
+                  <div style={{ margin: '6px 0 0', padding: '8px 12px', borderRadius: '8px', fontSize: '12px', background: aiG.score >= 0.8 ? c.successBgAlpha : aiG.score >= 0.4 ? c.warningBgAlpha : c.dangerBgAlpha, color: aiG.score >= 0.8 ? c.success : aiG.score >= 0.4 ? c.warning : c.danger }}>
                     <strong>AI Grade: {Math.round(aiG.score * 100)}%</strong> — {aiG.feedback}
                   </div>
                 )}
                 {isShort && q.answer && <p style={{ margin: '6px 0 0', fontSize: '12px', color: c.textSec }}><strong>Model answer:</strong> {q.answer}</p>}
-                {!isShort && String(given ?? '').trim().toLowerCase() !== String(q.answer).trim().toLowerCase() && q.answer != null && <p style={{ margin: '0 0 4px', fontSize: '13px', color: '#10b981' }}>Correct: <strong>{String(q.answer)}</strong></p>}
+                {!isShort && String(given ?? '').trim().toLowerCase() !== String(q.answer).trim().toLowerCase() && q.answer != null && <p style={{ margin: '0 0 4px', fontSize: '13px', color: c.success }}>Correct: <strong>{String(q.answer)}</strong></p>}
                 {q.explanation && <p style={{ margin: '6px 0 0', fontSize: '12px', color: c.textSec, fontStyle: 'italic' }}>{q.explanation}</p>}
               </div>
             </div>
@@ -952,6 +978,13 @@ function QuizTab({ pdfId, onWeakTopics, goToPlanner }) {
     </div>
   );
 }
+
+function parseWordLimit(text) {
+  const m = (text || '').match(/\b(\d+)\s*(?:[-–]\s*\d+\s*)?word[s]?\b/i);
+  return m ? parseInt(m[1]) : null;
+}
+
+const isAiGraded = (type) => type === 'short' || type === 'fill_blank';
 
 function QuestionInput({ q, value, onChange }) {
   if (q.type === 'true_false') {
@@ -999,10 +1032,20 @@ function QuestionInput({ q, value, onChange }) {
       </div>
     );
   }
+  const wordLimit = parseWordLimit(q.question);
+  const isLong = q.type === 'long';
+  const words = value ? value.trim().split(/\s+/).filter(Boolean).length : 0;
+  const overLimit = wordLimit && words > wordLimit;
   return (
-    <textarea value={value ?? ''} onChange={e => onChange(e.target.value)} placeholder="Type your answer…" rows={3}
-      style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', fontSize: '13px', border: `1.5px solid ${c.border}`, background: c.bg, color: c.textPri, resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }}
-    />
+    <div style={{ position: 'relative' }}>
+      <textarea value={value ?? ''} onChange={e => onChange(e.target.value)} placeholder="Type your answer…"
+        rows={isLong ? 8 : 4}
+        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', fontSize: '13px', border: `1.5px solid ${overLimit ? c.danger : c.border}`, background: c.bg, color: c.textPri, resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }}
+      />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px', fontSize: '11px', color: overLimit ? '#ef4444' : c.textSec }}>
+        <span style={{ color: overLimit ? c.danger : c.textSec }}>{wordLimit ? `${words} / ${wordLimit} words` : `${words} word${words !== 1 ? 's' : ''}`}</span>
+      </div>
+    </div>
   );
 }
 
@@ -1046,6 +1089,25 @@ function FlashcardTab({ pdfId }) {
     try { await aiAPI.saveDeck(pdfId, deck); setHasSaved(true); }
     catch { setError('Failed to save'); }
     finally { setSaving(false); }
+  };
+
+  const printDeck = () => {
+    const rows = deck.map((cd, i) =>
+      `<tr>
+        <td style="padding:10px 12px;border:1px solid #e5e7eb;font-weight:600;font-size:13px;width:50%;vertical-align:top">${i + 1}. ${cd.front}</td>
+        <td style="padding:10px 12px;border:1px solid #e5e7eb;font-size:13px;width:50%;vertical-align:top">${cd.back}</td>
+      </tr>`
+    ).join('');
+    const html = `<!DOCTYPE html><html><head><title>Flashcards</title>
+      <style>body{font-family:sans-serif;padding:24px}table{width:100%;border-collapse:collapse}
+      thead th{background:#f3f4f6;padding:8px 12px;border:1px solid #e5e7eb;font-size:12px;text-align:left}
+      @media print{button{display:none}}</style></head>
+      <body><h2 style="margin-bottom:16px">Flashcards (${deck.length} cards)</h2>
+      <table><thead><tr><th>Question (Front)</th><th>Answer (Back)</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <script>window.onload=()=>window.print()<\/script></body></html>`;
+    const w = window.open('', '_blank');
+    if (w) { w.document.write(html); w.document.close(); }
   };
 
   const rate = (q) => {
@@ -1093,6 +1155,7 @@ function FlashcardTab({ pdfId }) {
         <button onClick={() => { setCurrent(0); setFlipped(false); setPhase('review'); }} style={btn('primary')}><RotateCw size={14} /> Review Again</button>
         <button onClick={() => { setPhase('config'); setDeck([]); }} style={btn('ghost')}>New Deck</button>
         {!hasSaved && <button onClick={saveDeck} disabled={saving} style={btn('success')}><Save size={14} /> {saving ? 'Saving…' : 'Save Deck'}</button>}
+        <button onClick={printDeck} style={btn('ghost')}><Download size={14} /> Print</button>
       </div>
     </div>
   );
@@ -1103,10 +1166,13 @@ function FlashcardTab({ pdfId }) {
       {error && <ErrorBanner msg={error} onDismiss={() => setError('')} />}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontSize: '13px', color: c.textSec, fontWeight: 600 }}>Card {current + 1} / {deck.length}</span>
-        {!hasSaved
-          ? <button onClick={saveDeck} disabled={saving} style={btn('ghost', { fontSize: '12px' })}><Save size={13} /> {saving ? 'Saving…' : 'Save'}</button>
-          : <span style={{ fontSize: '12px', color: '#10b981', fontWeight: 600 }}>✓ Saved</span>
-        }
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <button onClick={printDeck} style={btn('ghost', { fontSize: '12px', padding: '5px 10px' })}><Download size={13} /> Print</button>
+          {!hasSaved
+            ? <button onClick={saveDeck} disabled={saving} style={btn('ghost', { fontSize: '12px' })}><Save size={13} /> {saving ? 'Saving…' : 'Save'}</button>
+            : <span style={{ fontSize: '12px', color: c.success, fontWeight: 600 }}>✓ Saved</span>
+          }
+        </div>
       </div>
       <ProgressBar pct={(current / deck.length) * 100} />
       <div onClick={() => setFlipped(f => !f)} style={{ ...card, minHeight: '200px', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '12px', background: flipped ? c.accent : c.bg, transition: 'background 0.2s', userSelect: 'none' }}>
@@ -1453,25 +1519,31 @@ function MockTab({ pdfId }) {
     finally { setLoading(false); }
   };
 
+  // Use a ref so the timer always calls the latest handleSubmit with current answers/questions,
+  // avoiding a stale closure when the interval was created at phase='taking' start.
+  const handleSubmitRef = useRef(null);
+
   useEffect(() => {
     if (phase !== 'taking') return;
     timerRef.current = setInterval(() => setTimeLeft(t => {
-      if (t <= 1) { clearInterval(timerRef.current); handleSubmit(); return 0; }
+      if (t <= 1) { clearInterval(timerRef.current); handleSubmitRef.current?.(); return 0; }
       return t - 1;
     }), 1000);
     return () => clearInterval(timerRef.current);
   }, [phase]);
 
   const handleSubmit = async () => {
+    if (phase !== 'taking') return;
     clearInterval(timerRef.current);
     setPhase('results');
-    const shortQs = questions.map((q, i) => ({ ...q, idx: i })).filter(q => q.type === 'short');
+    const shortQs = questions.map((q, i) => ({ ...q, idx: i })).filter(q => isAiGraded(q.type) || q.type === 'long');
     if (shortQs.length) {
       setGrading(true);
       try {
         const r = await aiAPI.gradeQuiz(pdfId, shortQs.map(q => ({
           question: q.question, model_answer: q.model_answer || q.answer || '',
           student_answer: answers[q.idx] || '', marks: serverCfg?.marks_each ?? cfg.marks_each,
+          type: q.type,
         })));
         const gmap = {};
         (r.data.grades || []).forEach((g, i) => { gmap[shortQs[i].idx] = g; });
@@ -1480,6 +1552,7 @@ function MockTab({ pdfId }) {
       finally { setGrading(false); }
     }
   };
+  handleSubmitRef.current = handleSubmit;
 
   const calcScore = () => {
     const me = serverCfg?.marks_each ?? cfg.marks_each;
@@ -1488,7 +1561,7 @@ function MockTab({ pdfId }) {
     let score = 0;
     questions.forEach((q, i) => {
       const a = answers[i];
-      if (q.type === 'short') {
+      if (isAiGraded(q.type) || q.type === 'long') {
         score += (aiGrades?.[i]?.score ?? 0) * me;
         return;
       }
@@ -1528,7 +1601,7 @@ function MockTab({ pdfId }) {
         <div style={card}>
           <SecTitle>Test Settings</SecTitle>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '14px' }}>
-            {[['Questions', 'num_questions', 5, 50], ['Marks/Q', 'marks_each', 1, 10], ['Duration (min)', 'duration', 5, 180]].map(([label, key, min, max]) => (
+            {[['Questions', 'num_questions', 5, 20], ['Marks/Q', 'marks_each', 1, 10], ['Duration (min)', 'duration', 5, 180]].map(([label, key, min, max]) => (
               <div key={key}>
                 <label style={lab}>{label}</label>
                 <input type="number" min={min} max={max} value={cfg[key]}
@@ -1733,21 +1806,22 @@ function MockTab({ pdfId }) {
         <button onClick={() => { setPhase('config'); setQuestions([]); setAiGrades(null); }} style={btn('primary')}><RefreshCw size={14} /> New Test</button>
       </div>
       {questions.map((q, i) => {
-        const a = answers[i]; const isShort = q.type === 'short';
+        const a = answers[i];
+        const isAiQ = isAiGraded(q.type) || q.type === 'long';
         const aiG = aiGrades?.[i];
-        const ok = !isShort && String(a ?? '').trim().toLowerCase() === String(q.answer).trim().toLowerCase();
-        const borderColor = isShort ? (aiG ? (aiG.score >= 0.8 ? '#10b981' : aiG.score >= 0.4 ? '#f59e0b' : '#ef4444') : c.accent) : (ok ? '#10b981' : '#ef4444');
+        const ok = !isAiQ && String(a ?? '').trim().toLowerCase() === String(q.answer).trim().toLowerCase();
+        const borderColor = isAiQ ? (aiG ? (aiG.score >= 0.8 ? '#10b981' : aiG.score >= 0.4 ? '#f59e0b' : '#ef4444') : c.accent) : (ok ? '#10b981' : '#ef4444');
         return (
           <div key={i} style={{ ...card, borderLeft: `4px solid ${borderColor}` }}>
             <p style={{ margin: '0 0 4px', fontWeight: 600, fontSize: '14px', color: c.textPri }}>{i + 1}. {q.question}</p>
             {a != null && <p style={{ margin: 0, fontSize: '13px', color: c.textSec }}>Your: <strong style={{ color: c.textPri }}>{String(a)}</strong></p>}
-            {isShort && aiG && (
-              <div style={{ margin: '6px 0 0', padding: '8px 12px', borderRadius: '8px', background: aiG.score >= 0.8 ? c.successBg : aiG.score >= 0.4 ? c.warningBg : c.dangerBg, fontSize: '12px' }}>
+            {isAiQ && aiG && (
+              <div style={{ margin: '6px 0 0', padding: '8px 12px', borderRadius: '8px', fontSize: '12px', background: aiG.score >= 0.8 ? c.successBgAlpha : aiG.score >= 0.4 ? c.warningBgAlpha : c.dangerBgAlpha, color: aiG.score >= 0.8 ? c.success : aiG.score >= 0.4 ? c.warning : c.danger }}>
                 <strong>AI Grade: {Math.round(aiG.score * 100)}%</strong> — {aiG.feedback}
               </div>
             )}
-            {isShort && q.model_answer && <p style={{ margin: '6px 0 0', fontSize: '12px', color: c.textSec }}><strong>Model:</strong> {q.model_answer}</p>}
-            {!isShort && !ok && q.answer != null && <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#10b981' }}>Correct: <strong>{String(q.answer)}</strong></p>}
+            {isAiQ && q.model_answer && <p style={{ margin: '6px 0 0', fontSize: '12px', color: c.textSec }}><strong>Model:</strong> {q.model_answer}</p>}
+            {!isAiQ && !ok && q.answer != null && <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#10b981' }}>Correct: <strong>{String(q.answer)}</strong></p>}
             {q.explanation && <p style={{ margin: '6px 0 0', fontSize: '12px', color: c.textSec, fontStyle: 'italic' }}>{q.explanation}</p>}
           </div>
         );

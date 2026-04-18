@@ -413,3 +413,122 @@ class TestScoreCalculation:
             {'name': 'A', 'max_marks': 100.0, 'marks_obtained': 80.0, 'weightage': 50.0},
         ])
         assert score == 40.0
+
+
+# ── GET /api/marks/cr-class-average/<semester_id> ─────────────────────────────
+
+class TestCrClassAverage:
+    """Tests for the CR-only class-average endpoint."""
+
+    URL = '/api/marks/cr-class-average/{}'
+
+    def _url(self, semester_id):
+        return self.URL.format(semester_id)
+
+    def test_requires_auth(self, client, registered_user, db):
+        _, semester = make_classroom(db, registered_user[0]['_id'])
+        resp = client.get(self._url(semester['_id']))
+        assert resp.status_code == 401
+
+    def test_non_cr_member_denied(self, client, registered_user, second_user, db):
+        user1, _ = registered_user
+        user2, token2 = second_user
+        classroom, semester = make_classroom(db, user1['_id'])
+        # Add user2 as a plain member (not CR)
+        db.classrooms.update_one({'_id': classroom['_id']}, {'$addToSet': {'members': user2['_id']}})
+        resp = client.get(self._url(semester['_id']), headers=auth_header(token2))
+        assert resp.status_code == 403
+
+    def test_non_member_denied(self, client, registered_user, second_user, db):
+        user1, _ = registered_user
+        _, token2 = second_user
+        _, semester = make_classroom(db, user1['_id'])
+        resp = client.get(self._url(semester['_id']), headers=auth_header(token2))
+        assert resp.status_code == 403
+
+    def test_nonexistent_semester_returns_404(self, client, registered_user, db):
+        _, token = registered_user
+        resp = client.get(self._url(ObjectId()), headers=auth_header(token))
+        assert resp.status_code == 404
+
+    def test_no_subjects_returns_empty_list(self, client, registered_user, db):
+        user, token = registered_user
+        _, semester = make_classroom(db, user['_id'])
+        resp = client.get(self._url(semester['_id']), headers=auth_header(token))
+        assert resp.status_code == 200
+        assert resp.get_json()['subjects'] == []
+
+    def test_no_marks_gives_null_class_avg(self, client, registered_user, db):
+        user, token = registered_user
+        classroom, semester = make_classroom(db, user['_id'])
+        make_subject(db, classroom['_id'], semester['_id'], user['_id'], name='IT250')
+        resp = client.get(self._url(semester['_id']), headers=auth_header(token))
+        assert resp.status_code == 200
+        subj = resp.get_json()['subjects'][0]
+        assert subj['name'] == 'IT250'
+        assert subj['class_avg'] is None
+        assert subj['count'] == 0
+
+    def test_single_student_class_avg_equals_their_score(self, client, registered_user, db):
+        user, token = registered_user
+        classroom, semester = make_classroom(db, user['_id'])
+        subj = make_subject(db, classroom['_id'], semester['_id'], user['_id'], name='IT250')
+        # 50/50 × 40 + 40/50 × 60 = 40 + 48 = 88.0
+        _insert_marks(db, subj['_id'], user['_id'], _full_entries())
+        resp = client.get(self._url(semester['_id']), headers=auth_header(token))
+        assert resp.status_code == 200
+        subj_data = resp.get_json()['subjects'][0]
+        assert subj_data['class_avg'] == 88.0
+        assert subj_data['count'] == 1
+
+    def test_two_students_class_avg_is_mean(self, client, registered_user, second_user, db):
+        user1, token1 = registered_user
+        user2, _ = second_user
+        classroom, semester = make_classroom(db, user1['_id'])
+        db.classrooms.update_one({'_id': classroom['_id']}, {'$addToSet': {'members': user2['_id']}})
+        subj = make_subject(db, classroom['_id'], semester['_id'], user1['_id'], name='IT250')
+        # user1 → 88.0, user2 → 60.0
+        _insert_marks(db, subj['_id'], user1['_id'], _full_entries())
+        _insert_marks(db, subj['_id'], user2['_id'], [
+            {'name': 'End', 'max_marks': 100.0, 'marks_obtained': 60.0, 'weightage': 100.0},
+        ])
+        resp = client.get(self._url(semester['_id']), headers=auth_header(token1))
+        assert resp.status_code == 200
+        subj_data = resp.get_json()['subjects'][0]
+        assert subj_data['class_avg'] == round((88.0 + 60.0) / 2, 2)
+        assert subj_data['count'] == 2
+
+    def test_student_without_marks_excluded_from_avg(self, client, registered_user, second_user, db):
+        user1, token1 = registered_user
+        user2, _ = second_user
+        classroom, semester = make_classroom(db, user1['_id'])
+        db.classrooms.update_one({'_id': classroom['_id']}, {'$addToSet': {'members': user2['_id']}})
+        subj = make_subject(db, classroom['_id'], semester['_id'], user1['_id'], name='IT250')
+        # Only user1 has marks; user2 has none → avg = user1's score
+        _insert_marks(db, subj['_id'], user1['_id'], _full_entries())
+        resp = client.get(self._url(semester['_id']), headers=auth_header(token1))
+        subj_data = resp.get_json()['subjects'][0]
+        assert subj_data['class_avg'] == 88.0
+        assert subj_data['count'] == 1
+
+    def test_multiple_subjects_all_returned(self, client, registered_user, db):
+        user, token = registered_user
+        classroom, semester = make_classroom(db, user['_id'])
+        make_subject(db, classroom['_id'], semester['_id'], user['_id'], name='IT250')
+        make_subject(db, classroom['_id'], semester['_id'], user['_id'], name='IT251')
+        resp = client.get(self._url(semester['_id']), headers=auth_header(token))
+        assert resp.status_code == 200
+        subjects = resp.get_json()['subjects']
+        assert len(subjects) == 2
+        names = [s['name'] for s in subjects]
+        assert 'IT250' in names and 'IT251' in names
+
+    def test_response_contains_required_fields(self, client, registered_user, db):
+        user, token = registered_user
+        classroom, semester = make_classroom(db, user['_id'])
+        make_subject(db, classroom['_id'], semester['_id'], user['_id'], name='IT250')
+        resp = client.get(self._url(semester['_id']), headers=auth_header(token))
+        assert resp.status_code == 200
+        subj = resp.get_json()['subjects'][0]
+        for field in ('subject_id', 'name', 'class_avg', 'count'):
+            assert field in subj, f"Missing field: {field}"

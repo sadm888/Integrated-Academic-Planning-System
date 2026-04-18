@@ -6,7 +6,7 @@ import emojiData from '@emoji-mart/data';
 import Avatar from '../components/Avatar';
 import { useSocket } from '../hooks/useSocket';
 import FilePickerModal from '../components/FilePickerModal';
-import { Image, Video, Music, FileText, Paperclip, Pin, PinOff, Trash2, EyeOff, Eye, AlertTriangle, Folder, FolderOpen, Lock, Clock, X, UserX, CornerUpLeft, BarChart2, Smile, Info } from 'lucide-react';
+import { Image, Video, Music, FileText, Paperclip, Pin, PinOff, Trash2, EyeOff, Eye, AlertTriangle, Folder, FolderOpen, Lock, Clock, X, UserX, CornerUpLeft, BarChart2, Smile, Info, Edit2, List, Plus, Check } from 'lucide-react';
 import { FileTypeIcon, sizeLabel } from '../utils/fileUtils';
 import { formatTime, relativeTime, formatDate } from '../utils/timeUtils';
 import { renderMentions } from '../utils/textUtils';
@@ -569,6 +569,20 @@ function Chat({ user }) {
   const [pollOptions, setPollOptions]     = useState(['', '']);
   const [pollCreating, setPollCreating]   = useState(false);
 
+  // List message creation
+  const [listModal, setListModal]         = useState(false);
+  const [listPrompt, setListPrompt]       = useState('');
+  const [listFirstEntry, setListFirstEntry] = useState('');
+  const [listCreating, setListCreating]   = useState(false);
+
+  // Edit own message
+  const [editingMsg, setEditingMsg]       = useState(null); // {id, text}
+  const [editSaving, setEditSaving]       = useState(false);
+
+  // List entry interactions
+  const [addingEntry, setAddingEntry]     = useState(null); // {msgId, text}
+  const [editingEntry, setEditingEntry]   = useState(null); // {msgId, idx, text}
+
   // Attach-from-docs states
   const [showAttachMenu, setShowAttachMenu]     = useState(false);
   const [showFilePicker, setShowFilePicker]     = useState(false);
@@ -756,6 +770,14 @@ function Chat({ user }) {
     setReadReceipts(prev => ({ ...prev, [user_id]: last_read_at }));
   }, []);
 
+  const handleMessageEdited = useCallback((updated) => {
+    setMessages(prev => prev.map(m => m.id === updated.id ? { ...m, text: updated.text, edited_at: updated.edited_at } : m));
+  }, []);
+
+  const handleListUpdated = useCallback((updated) => {
+    setMessages(prev => prev.map(m => m.id === updated.id ? updated : m));
+  }, []);
+
   // #7 + #16 — useSocket hook (replaces manual socket setup, exposes connected)
   const { socketRef, connected } = useSocket(semesterId, {
     onMessage:  handleMessage,
@@ -772,6 +794,8 @@ function Chat({ user }) {
     onMention:         handleMention,
     onReactionUpdated: handleReactionUpdated,
     onReadReceipt:     handleReadReceipt,
+    onMessageEdited:   handleMessageEdited,
+    onListUpdated:     handleListUpdated,
   });
 
   // ── Search ────────────────────────────────────────────────────────────────
@@ -793,6 +817,37 @@ function Chat({ user }) {
     if (searchOpen) setTimeout(() => searchInputRef.current?.focus(), 50);
     else { setSearchQuery(''); setSearchResults([]); }
   }, [searchOpen]);
+
+  // ── Edit own message ───────────────────────────────────────────────────────
+  const saveEditedMessage = async () => {
+    if (!editingMsg || !editingMsg.text.trim() || editSaving) return;
+    setEditSaving(true);
+    try {
+      const { data } = await chatAPI.editMessage(semesterId, editingMsg.id, editingMsg.text.trim());
+      setMessages(prev => prev.map(m => m.id === editingMsg.id ? { ...m, text: data.message.text, edited_at: data.message.edited_at } : m));
+      setEditingMsg(null);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to edit message');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  // ── List message creation ──────────────────────────────────────────────────
+  const submitList = async () => {
+    if (!listPrompt.trim() || listCreating) return;
+    setListCreating(true);
+    try {
+      await chatAPI.createList(semesterId, listPrompt.trim(), listFirstEntry.trim());
+      setListModal(false);
+      setListPrompt('');
+      setListFirstEntry('');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to create list');
+    } finally {
+      setListCreating(false);
+    }
+  };
 
   // ── Poll creation ──────────────────────────────────────────────────────────
   const submitPoll = async () => {
@@ -1214,8 +1269,110 @@ function Chat({ user }) {
       );
     }
 
+    if (msg.type === 'list' && msg.list_data) {
+      const ld = msg.list_data;
+      const isAddingHere = addingEntry?.msgId === msg.id;
+
+      const commitEditEntry = async (text) => {
+        if (!text.trim()) return;
+        try { await chatAPI.editListEntry(semesterId, msg.id, editingEntry.idx, text.trim()); setEditingEntry(null); }
+        catch (err) { setError(err.response?.data?.error || 'Failed to edit entry'); }
+      };
+      const commitAddEntry = async (text) => {
+        if (!text.trim()) return;
+        try { await chatAPI.addListEntry(semesterId, msg.id, text.trim()); setAddingEntry(null); }
+        catch (err) { setError(err.response?.data?.error || 'Failed to add entry'); }
+      };
+      const commitDeleteEntry = async (idx) => {
+        try { await chatAPI.deleteListEntry(semesterId, msg.id, idx); }
+        catch (err) { setError(err.response?.data?.error || 'Failed to delete entry'); }
+      };
+
+      const inputStyle = { flex: 1, padding: '4px 8px', borderRadius: '6px', border: '1.5px solid var(--border-color)', background: 'var(--card-bg)', color: 'var(--text-primary)', fontSize: '13px', outline: 'none' };
+      const confirmBtnStyle = { background: 'var(--primary-color)', border: 'none', borderRadius: '5px', cursor: 'pointer', padding: '3px 8px', color: 'var(--btn-text, white)', display: 'flex', alignItems: 'center' };
+      const cancelBtnStyle = { background: 'none', border: 'none', cursor: 'pointer', padding: '3px 5px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center' };
+
+      return (
+        <div style={{ minWidth: '240px', maxWidth: '340px' }}>
+          <div style={{ fontWeight: 700, fontSize: '14px', marginBottom: '10px', color: isMe ? 'white' : 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <List size={15} strokeWidth={2} style={{ flexShrink: 0 }} />{ld.prompt}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {ld.entries.map((entry, idx) => {
+              const entryIsMe = entry.user_id === user?.id;
+              const isEditingThis = editingEntry?.msgId === msg.id && editingEntry?.idx === idx;
+              return (
+                <div key={idx} style={{ padding: '6px 10px', borderRadius: '8px', background: isMe ? 'rgba(255,255,255,0.12)' : 'var(--bg-color)' }}>
+                  {isEditingThis ? (
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <input
+                        autoFocus
+                        value={editingEntry.text}
+                        onChange={e => setEditingEntry(prev => ({ ...prev, text: e.target.value }))}
+                        onKeyDown={e => {
+                          if (e.key === 'Escape') { e.preventDefault(); setEditingEntry(null); }
+                          if (e.key === 'Enter') { e.preventDefault(); commitEditEntry(editingEntry.text); }
+                        }}
+                        style={inputStyle}
+                      />
+                      <button onClick={() => commitEditEntry(editingEntry.text)} style={confirmBtnStyle}><Check size={12} /></button>
+                      <button onClick={() => setEditingEntry(null)} style={cancelBtnStyle}><X size={12} /></button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '6px' }}>
+                      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 600, color: isMe ? 'rgba(255,255,255,0.7)' : 'var(--primary-color)' }}>{entry.full_name || entry.username}</span>
+                        <span style={{ fontSize: '13px', color: isMe ? 'white' : 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                          {entry.content}{entry.edited_at && <span style={{ fontSize: '10px', opacity: 0.5, marginLeft: '4px' }}>(edited)</span>}
+                        </span>
+                      </div>
+                      {entryIsMe && (
+                        <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+                          <button onClick={() => setEditingEntry({ msgId: msg.id, idx, text: entry.content })} style={{ ...cancelBtnStyle, padding: '1px 3px', borderRadius: '3px' }} title="Edit"><Edit2 size={11} /></button>
+                          <button onClick={() => commitDeleteEntry(idx)} style={{ ...cancelBtnStyle, padding: '1px 3px', borderRadius: '3px', color: isMe ? 'rgba(255,255,255,0.5)' : 'var(--text-muted)' }} title="Delete"><Trash2 size={11} /></button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {isAddingHere ? (
+            <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
+              <input
+                autoFocus
+                value={addingEntry.text}
+                onChange={e => setAddingEntry(prev => ({ ...prev, text: e.target.value }))}
+                placeholder="Add your item…"
+                onKeyDown={e => {
+                  if (e.key === 'Escape') { e.preventDefault(); setAddingEntry(null); }
+                  if (e.key === 'Enter') { e.preventDefault(); commitAddEntry(addingEntry.text); }
+                }}
+                style={{ ...inputStyle, padding: '5px 10px', borderRadius: '8px', border: '1.5px solid rgba(255,255,255,0.35)' }}
+              />
+              <button onClick={() => commitAddEntry(addingEntry.text)} style={{ ...confirmBtnStyle, borderRadius: '7px', padding: '4px 10px', fontWeight: 700, fontSize: '13px' }}><Check size={14} /></button>
+              <button onClick={() => setAddingEntry(null)} style={{ ...cancelBtnStyle, padding: '4px 6px' }}><X size={14} /></button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setAddingEntry({ msgId: msg.id, text: '' })}
+              style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px', background: isMe ? 'rgba(255,255,255,0.15)' : 'var(--bg-color)', border: 'none', borderRadius: '8px', padding: '5px 12px', cursor: 'pointer', fontSize: '12px', color: isMe ? 'white' : 'var(--text-secondary)', fontWeight: 600, width: '100%', justifyContent: 'center' }}
+            >
+              <Plus size={13} /> Add your item
+            </button>
+          )}
+        </div>
+      );
+    }
+
     if (!msg.file) {
-      return <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{renderMentions(msg.text, user?.username)}</span>;
+      return (
+        <>
+          <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{renderMentions(msg.text, user?.username)}</span>
+          {msg.edited_at && <span style={{ fontSize: '10px', opacity: 0.5, marginLeft: '4px' }}>(edited)</span>}
+        </>
+      );
     }
 
     const { mime_type, name, size } = msg.file;
@@ -1670,10 +1827,11 @@ function Chat({ user }) {
                       {msg.full_name || msg.username}
                       {semester?.cr_ids?.includes(msg.user_id) && (
                         <span style={{
-                          fontSize: '10px', fontWeight: 700, color: '#fff',
-                          background: '#7c3aed', borderRadius: '4px',
-                          padding: '1px 5px', letterSpacing: '0.03em',
-                          lineHeight: 1.4,
+                          fontSize: '9px', fontWeight: 700,
+                          color: 'var(--badge-purple-text)',
+                          background: 'var(--badge-purple-bg)',
+                          borderRadius: '4px', padding: '1px 5px',
+                          letterSpacing: '0.05em', lineHeight: 1.5,
                         }}>CR</span>
                       )}
                     </span>
@@ -1711,6 +1869,16 @@ function Chat({ user }) {
                             onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-color)'}
                             onMouseLeave={e => e.currentTarget.style.background = 'none'}
                           ><Info size={14} strokeWidth={1.75} /></button>
+                        )}
+                        {/* Edit button — own text messages only */}
+                        {isMe && !msg.deleted_for_everyone && !msg.file && msg.type !== 'poll' && msg.type !== 'list' && msg.text && (
+                          <button
+                            onClick={() => setEditingMsg({ id: msg.id, text: msg.text })}
+                            title="Edit message"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', padding: '2px 5px', borderRadius: '4px', display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}
+                            onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-color)'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                          ><Edit2 size={13} strokeWidth={1.75} /></button>
                         )}
                         {/* Reply button — all messages */}
                         {!msg.deleted_for_everyone && (
@@ -1849,7 +2017,25 @@ function Chat({ user }) {
                           </div>
                         </div>
                       )}
-                      {renderContent(msg)}
+                      {editingMsg?.id === msg.id ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <textarea
+                            autoFocus
+                            value={editingMsg.text}
+                            onChange={e => setEditingMsg(prev => ({ ...prev, text: e.target.value }))}
+                            onKeyDown={e => {
+                              if (e.key === 'Escape') { e.preventDefault(); setEditingMsg(null); }
+                              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEditedMessage(); }
+                            }}
+                            rows={2}
+                            style={{ width: '100%', boxSizing: 'border-box', resize: 'none', border: '1.5px solid rgba(255,255,255,0.4)', borderRadius: '8px', padding: '6px 10px', fontSize: '13px', fontFamily: 'inherit', outline: 'none', lineHeight: '1.4', background: 'rgba(0,0,0,0.15)', color: 'white' }}
+                          />
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                            <button onClick={() => setEditingMsg(null)} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '6px', color: 'white', padding: '3px 10px', fontSize: '12px', cursor: 'pointer' }}>Cancel</button>
+                            <button onClick={saveEditedMessage} disabled={editSaving || !editingMsg.text.trim()} style={{ background: 'rgba(255,255,255,0.9)', border: 'none', borderRadius: '6px', color: '#667eea', padding: '3px 10px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}>{editSaving ? '…' : 'Save'}</button>
+                          </div>
+                        </div>
+                      ) : renderContent(msg)}
                     </div>
 
                     {/* Emoji reaction picker */}
@@ -2176,7 +2362,10 @@ function Chat({ user }) {
                   { icon: <Paperclip size={14} strokeWidth={1.75} />, label: 'From device', action: () => { setShowAttachMenu(false); fileInputRef.current?.click(); } },
                   { icon: <Folder size={14} strokeWidth={1.75} />, label: 'From Files', action: () => { setShowAttachMenu(false); setShowFilePicker(true); } },
                   { icon: <Lock size={14} strokeWidth={1.75} />, label: 'From personal documents', action: openPersonalDocs },
-                  ...(semester?.is_user_cr || semester?.is_user_mod ? [{ icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12h6M12 9v6"/></svg>, label: 'Create poll', action: () => { setShowAttachMenu(false); setPollModal(true); } }] : []),
+                  ...(semester?.is_user_cr || semester?.is_user_mod ? [
+                    { icon: <List size={14} strokeWidth={1.75} />, label: 'Create list', action: () => { setShowAttachMenu(false); setListModal(true); } },
+                    { icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12h6M12 9v6"/></svg>, label: 'Create poll', action: () => { setShowAttachMenu(false); setPollModal(true); } },
+                  ] : []),
                 ].map(({ icon, label, action }) => (
                   <button
                     key={label}
@@ -2480,6 +2669,48 @@ function Chat({ user }) {
                 onClick={submitPoll}
                 disabled={pollCreating || !pollQuestion.trim() || pollOptions.filter(o => o.trim()).length < 2}
               >{pollCreating ? 'Creating…' : 'Create Poll'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── List creation modal ── */}
+      {listModal && (
+        <div className="modal-overlay" onClick={() => !listCreating && setListModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '420px' }}>
+            <h3 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}><List size={18} strokeWidth={2} />Create List</h3>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>List prompt / question</label>
+              <input
+                value={listPrompt}
+                onChange={e => setListPrompt(e.target.value)}
+                placeholder="e.g. What topics should we cover?"
+                maxLength={200}
+                autoFocus
+                onKeyDown={e => e.key === 'Enter' && submitList()}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', border: '1.5px solid var(--border-color)', borderRadius: '8px', fontSize: '14px', background: 'var(--bg-color)', color: 'var(--text-primary)', outline: 'none' }}
+                onFocus={e => e.target.style.borderColor = 'var(--primary-color)'}
+                onBlur={e => e.target.style.borderColor = 'var(--border-color)'}
+              />
+            </div>
+            <div style={{ marginBottom: '4px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>Your first item <span style={{ fontWeight: 400, opacity: 0.6 }}>(optional)</span></label>
+              <input
+                value={listFirstEntry}
+                onChange={e => setListFirstEntry(e.target.value)}
+                placeholder="Add your first item…"
+                maxLength={300}
+                onKeyDown={e => e.key === 'Enter' && submitList()}
+                style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', border: '1.5px solid var(--border-color)', borderRadius: '8px', fontSize: '13px', background: 'var(--bg-color)', color: 'var(--text-primary)', outline: 'none' }}
+                onFocus={e => e.target.style.borderColor = 'var(--primary-color)'}
+                onBlur={e => e.target.style.borderColor = 'var(--border-color)'}
+              />
+            </div>
+            <div className="modal-buttons" style={{ marginTop: '16px' }}>
+              <button type="button" onClick={() => { setListModal(false); setListPrompt(''); setListFirstEntry(''); }} disabled={listCreating}>Cancel</button>
+              <button type="submit" onClick={submitList} disabled={listCreating || !listPrompt.trim()}>
+                {listCreating ? 'Creating…' : 'Create List'}
+              </button>
             </div>
           </div>
         </div>

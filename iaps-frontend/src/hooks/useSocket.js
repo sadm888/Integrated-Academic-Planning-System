@@ -52,6 +52,8 @@ export function useSocket(semesterId, handlers = {}) {
     socket.on('mention_notification', (data) => handlersRef.current.onMention?.(data));
     socket.on('reaction_updated',     (data) => handlersRef.current.onReactionUpdated?.(data));
     socket.on('read_receipt',         (data) => handlersRef.current.onReadReceipt?.(data));
+    socket.on('message_edited',       (data) => handlersRef.current.onMessageEdited?.(data));
+    socket.on('list_updated',         (data) => handlersRef.current.onListUpdated?.(data));
 
     return () => {
       socket.disconnect();
