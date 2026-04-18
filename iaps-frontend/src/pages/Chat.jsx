@@ -2175,7 +2175,6 @@ function Chat({ user }) {
                 {[
                   { icon: <Paperclip size={14} strokeWidth={1.75} />, label: 'From device', action: () => { setShowAttachMenu(false); fileInputRef.current?.click(); } },
                   { icon: <Folder size={14} strokeWidth={1.75} />, label: 'From Files', action: () => { setShowAttachMenu(false); setShowFilePicker(true); } },
-                  { icon: <FolderOpen size={14} strokeWidth={1.75} />, label: 'From semester documents', action: openSemDocs },
                   { icon: <Lock size={14} strokeWidth={1.75} />, label: 'From personal documents', action: openPersonalDocs },
                   ...(semester?.is_user_cr || semester?.is_user_mod ? [{ icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 12h6M12 9v6"/></svg>, label: 'Create poll', action: () => { setShowAttachMenu(false); setPollModal(true); } }] : []),
                 ].map(({ icon, label, action }) => (

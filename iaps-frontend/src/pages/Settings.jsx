@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { settingsAPI, calendarAPI, BACKEND_URL } from '../services/api';
+import { settingsAPI, calendarAPI, authAPI, BACKEND_URL } from '../services/api';
 import { formatDate } from '../utils/timeUtils';
 import { useTheme } from '../contexts/ThemeContext';
 import Avatar from '../components/Avatar';
 import { FileTypeIcon, sizeLabel } from '../utils/fileUtils';
 import { AlertTriangle, Pencil, Eye, Trash2, Calendar, CheckCircle } from 'lucide-react';
 
-const SECTIONS = ['Profile', 'Security', 'Login Activity', 'Appearance', 'Privacy', 'Personal Documents', 'Connected Services'];
+const SECTIONS = ['Profile', 'Security', 'Login Activity', 'Appearance', 'Privacy', 'Personal Documents', 'Connected Services', 'Invite a Friend'];
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -1045,7 +1045,81 @@ function Settings({ user, onLogout, onProfileUpdate }) {
         {activeSection === 'Privacy' && <PrivacySection user={localUser} onProfileUpdate={handleProfileUpdate} />}
         {activeSection === 'Personal Documents' && <PersonalDocumentsSection />}
         {activeSection === 'Connected Services' && <ConnectedServicesSection />}
+        {activeSection === 'Invite a Friend' && <InviteFriendSection />}
       </main>
+    </div>
+  );
+}
+
+function InviteFriendSection() {
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+
+  const handleSend = async (e) => {
+    e.preventDefault();
+    if (!email.trim()) { setErr('Please enter an email address.'); return; }
+    setLoading(true);
+    setMsg('');
+    setErr('');
+    try {
+      const res = await authAPI.sendInvite(email.trim().toLowerCase());
+      setMsg(res.data.message || 'Invitation sent!');
+      setEmail('');
+    } catch (ex) {
+      setErr(ex.response?.data?.error || 'Failed to send invitation. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <h2 style={headingStyle}>Invite a Friend</h2>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>
+        Know someone who'd benefit from IAPS? Enter their email and we'll send them a
+        personalised invitation link to sign up.
+      </p>
+
+      <form onSubmit={handleSend} style={{ maxWidth: 420 }}>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', fontWeight: 600, fontSize: 14, marginBottom: 6 }}>
+            Email address
+          </label>
+          <input
+            type="email"
+            value={email}
+            onChange={e => { setEmail(e.target.value); setErr(''); setMsg(''); }}
+            placeholder="friend@example.com"
+            style={{
+              width: '100%', padding: '10px 14px', borderRadius: 8, fontSize: 14,
+              border: '1.5px solid var(--border-color)', background: 'var(--input-bg, var(--bg-color))',
+              color: 'var(--text-primary)', boxSizing: 'border-box',
+            }}
+          />
+        </div>
+
+        {err && (
+          <p style={{ color: '#dc2626', fontSize: 13, marginBottom: 10 }}>{err}</p>
+        )}
+        {msg && (
+          <p style={{ color: '#16a34a', fontSize: 13, marginBottom: 10 }}>{msg}</p>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          style={{
+            padding: '10px 28px', borderRadius: 8, border: 'none',
+            background: '#667eea', color: '#fff', fontWeight: 600,
+            fontSize: 14, cursor: loading ? 'not-allowed' : 'pointer',
+            opacity: loading ? 0.7 : 1,
+          }}
+        >
+          {loading ? 'Sending…' : 'Send Invitation'}
+        </button>
+      </form>
     </div>
   );
 }

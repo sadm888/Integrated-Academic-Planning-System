@@ -34,6 +34,8 @@ def create_app():
     
     # Initialize extensions
     limiter.init_app(app)
+    from utils.mailer import init_mail
+    init_mail(app)
 
     # Initialize database connection
     try:
@@ -61,6 +63,7 @@ def create_app():
     from routes.timetable_routes import timetable_bp
     from routes.marks_routes import marks_bp
     from routes.attendance_routes import attendance_bp
+    from routes.ai_routes import ai_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(classroom_bp)
@@ -78,6 +81,7 @@ def create_app():
     app.register_blueprint(timetable_bp)
     app.register_blueprint(marks_bp)
     app.register_blueprint(attendance_bp)
+    app.register_blueprint(ai_bp)
 
     # Ensure avatar upload directory exists
     import os as _os

@@ -102,6 +102,26 @@ class Database:
                 name="attendance_settings_semester"
             )
 
+            # email_verifications — look up by token; auto-expire via TTL on expires_at
+            self._db.email_verifications.create_index(
+                [("token", ASCENDING)], unique=True, name="email_verifications_token"
+            )
+            self._db.email_verifications.create_index(
+                [("expires_at", ASCENDING)],
+                expireAfterSeconds=0,
+                name="email_verifications_ttl"
+            )
+
+            # invitations — look up by token; auto-expire via TTL on expires_at
+            self._db.invitations.create_index(
+                [("token", ASCENDING)], unique=True, name="invitations_token"
+            )
+            self._db.invitations.create_index(
+                [("expires_at", ASCENDING)],
+                expireAfterSeconds=0,
+                name="invitations_ttl"
+            )
+
             logger.info("Database indexes checked/created successfully")
         except Exception as e:
             logger.warning(f"Error creating indexes: {e}")

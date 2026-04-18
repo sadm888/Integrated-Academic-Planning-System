@@ -425,7 +425,7 @@ function Calendar({ user }) {
           justifyContent: 'center', padding: '80px 20px', textAlign: 'center'
         }}>
           <div style={{ marginBottom: '20px' }}><CalendarDays size={72} strokeWidth={1.25} color="#667eea" /></div>
-          <h2 style={{ fontSize: '26px', color: '#333', marginBottom: '12px' }}>My Calendar</h2>
+          <h2 style={{ fontSize: '26px', color: 'var(--text-primary)', marginBottom: '12px' }}>My Calendar</h2>
           <p style={{ color: '#666', maxWidth: '420px', marginBottom: '32px', lineHeight: 1.7 }}>
             Connect your Google Calendar to view your schedule, add personal events,
             and pull class schedules posted by your CRs.
@@ -481,7 +481,7 @@ function Calendar({ user }) {
               ← Prev
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <h2 style={{ margin: 0, fontSize: '22px', color: '#333', fontWeight: 700 }}>
+              <h2 style={{ margin: 0, fontSize: '22px', color: 'var(--text-primary)', fontWeight: 700 }}>
                 {MONTH_NAMES[month]} {year}
               </h2>
               <button
@@ -539,7 +539,7 @@ function Calendar({ user }) {
                   >
                     <div style={{
                       fontSize: '13px', fontWeight: isToday ? 700 : 400,
-                      color: isToday ? '#667eea' : '#333', marginBottom: '4px'
+                      color: isToday ? '#667eea' : 'var(--text-primary)', marginBottom: '4px'
                     }}>
                       {day}
                     </div>
@@ -592,7 +592,7 @@ function Calendar({ user }) {
           position: 'sticky', top: '76px',
           maxHeight: 'calc(100vh - 96px)', overflowY: 'auto'
         }}>
-          <h3 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: 700, color: '#333' }}>
+          <h3 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>
             Pending Class Schedules
           </h3>
 
@@ -606,7 +606,7 @@ function Calendar({ user }) {
               return (
                 <div key={classroom.id} style={{ marginBottom: '24px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <strong style={{ fontSize: '13px', color: '#333' }}>{classroom.name}</strong>
+                    <strong style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{classroom.name}</strong>
                     <button
                       onClick={() => handlePullAll(classroom.id)}
                       style={{

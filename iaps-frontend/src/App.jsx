@@ -16,6 +16,8 @@ import AcademicCalendar from './pages/AcademicCalendar';
 import Marks from './pages/Marks';
 import MarksDetail from './pages/MarksDetail';
 import Attendance from './pages/Attendance';
+import MarksAnalytics from './pages/MarksAnalytics';
+import StudyTools from './pages/StudyTools';
 import Navbar from './components/Navbar';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
@@ -452,6 +454,26 @@ function App() {
           element={
             user ? (
               <MarksDetail user={user} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/classroom/:classroomId/semester/:semesterId/analytics"
+          element={
+            user ? (
+              <MarksAnalytics user={user} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/study-tools"
+          element={
+            user ? (
+              <StudyTools user={user} />
             ) : (
               <Navigate to="/login" replace />
             )

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { academicAPI, chatAPI, documentAPI, BACKEND_URL } from '../services/api';
 import { sizeLabel, FileTypeIcon } from '../utils/fileUtils';
-import { Trash2, FileText, MessageSquare, X } from 'lucide-react';
+import { Trash2, X, FileText, BookOpen, Calendar, ClipboardList, FolderOpen, MessageSquare, Folder, GraduationCap, FlaskConical } from 'lucide-react';
 
 function getResourceUrl(r) {
   const token = localStorage.getItem('token') || '';
@@ -10,41 +10,60 @@ function getResourceUrl(r) {
   return academicAPI.getFileUrl(r.id);
 }
 
-/**
- * FilePickerModal — pick an existing file from Documents or Chat Files.
- * onSelect(File) is called with a synthetic File object ready for upload.
- * onClose closes the modal.
- * user — current logged-in user (for delete permissions).
- */
-export default function FilePickerModal({ onSelect, onClose, user }) {
-  const [resources, setResources] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [fetching, setFetching] = useState(false);
-  const [search, setSearch] = useState('');
-  const [activeSection, setActiveSection] = useState(null); // null | 'docs' | 'chat'
-  const [deletingId, setDeletingId] = useState(null);
+const SECTION_ICON_MAP = {
+  'PYQ':         FileText,
+  'Books':       BookOpen,
+  'Schedule':    Calendar,
+  'Course Plan': ClipboardList,
+  'Documents':   FolderOpen,
+  'Chat Files':  MessageSquare,
+  'Lab':         FlaskConical,
+  'Notes':       GraduationCap,
+};
 
-  const load = () => {
-    setLoading(true);
-    setError('');
+/**
+ * FilePickerModal — pick any file from anywhere on the platform.
+ * Groups files by section_name (PYQ, Books, Chat Files, Documents, etc.)
+ * matching exactly what appears in the Files nav page.
+ * onSelect(File) is called with a synthetic File object ready for upload.
+ */
+export default function FilePickerModal({ onSelect, onClose, user, excludePdf = false }) {
+  const [resources,     setResources]     = useState([]);
+  const [loading,       setLoading]       = useState(true);
+  const [error,         setError]         = useState('');
+  const [fetching,      setFetching]      = useState(false);
+  const [search,        setSearch]        = useState('');
+  const [activeSection, setActiveSection] = useState(null);
+  const [deletingId,    setDeletingId]    = useState(null);
+
+  useEffect(() => {
     academicAPI.getAllResources()
       .then(res => setResources(res.data.resources || []))
       .catch(() => setError('Failed to load files'))
       .finally(() => setLoading(false));
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
-
-  const { docFiles, chatFiles } = useMemo(() => {
+  // Group all resources by section_name, preserving insertion order
+  const sections = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const all = q
-      ? resources.filter(r => (r.name || '').toLowerCase().includes(q) || (r.uploaded_by_name || '').toLowerCase().includes(q))
+    let all = excludePdf
+      ? resources.filter(r => r.mime_type !== 'application/pdf' && !(r.name || '').toLowerCase().endsWith('.pdf'))
       : resources;
-    return {
-      docFiles: all.filter(r => r.source !== 'chat_unlinked' && r.source !== 'chat'),
-      chatFiles: all.filter(r => r.source === 'chat_unlinked' || r.source === 'chat'),
-    };
+    if (q) all = all.filter(r =>
+      (r.name || '').toLowerCase().includes(q) ||
+      (r.subject_name || '').toLowerCase().includes(q) ||
+      (r.classroom_name || '').toLowerCase().includes(q) ||
+      (r.semester_name || '').toLowerCase().includes(q) ||
+      (r.section_name || '').toLowerCase().includes(q)
+    );
+
+    const map = new Map(); // section_name → items[]
+    for (const r of all) {
+      const key = r.section_name || 'Other';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(r);
+    }
+    return map;
   }, [resources, search]);
 
   const handleSelect = async (resource) => {
@@ -91,9 +110,8 @@ export default function FilePickerModal({ onSelect, onClose, user }) {
   };
 
   const renderFiles = (files, emptyMsg) => {
-    if (files.length === 0) {
+    if (files.length === 0)
       return <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '24px 0', fontSize: '13px' }}>{emptyMsg}</p>;
-    }
     return files.map(r => (
       <div key={r.id} style={{
         display: 'flex', alignItems: 'center', gap: '10px',
@@ -103,9 +121,12 @@ export default function FilePickerModal({ onSelect, onClose, user }) {
       }}>
         <FileTypeIcon mime={r.mime_type} size={20} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {r.name}
+          </div>
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-            {r.uploaded_by_name}{r.classroom_name ? ` · ${r.classroom_name}` : ''}{r.size ? ` · ${sizeLabel(r.size)}` : ''}
+            {[r.classroom_name, r.semester_name, r.subject_name].filter(Boolean).join(' · ')}
+            {r.size ? ` · ${sizeLabel(r.size)}` : ''}
           </div>
         </div>
         <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
@@ -139,24 +160,27 @@ export default function FilePickerModal({ onSelect, onClose, user }) {
     ));
   };
 
-  const SectionHeader = ({ id, icon, label, count }) => (
-    <div
-      onClick={() => setActiveSection(activeSection === id ? null : id)}
-      style={{
-        display: 'flex', alignItems: 'center', gap: '10px',
-        padding: '11px 14px', borderRadius: '10px',
-        background: activeSection === id ? 'var(--bg-color)' : 'var(--card-bg)',
-        border: `1.5px solid ${activeSection === id ? '#667eea55' : 'var(--border-color)'}`,
-        marginBottom: '8px', cursor: 'pointer',
-        transition: 'all 0.15s',
-      }}
-    >
-      <span style={{ display: 'flex', alignItems: 'center' }}>{icon}</span>
-      <span style={{ flex: 1, fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>{label}</span>
-      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{count} file{count !== 1 ? 's' : ''}</span>
-      <span style={{ fontSize: '14px', color: 'var(--text-secondary)', transition: 'transform 0.2s', transform: activeSection === id ? 'rotate(90deg)' : 'none' }}>›</span>
-    </div>
-  );
+  const SectionHeader = ({ id, label, count }) => {
+    const IconComp = SECTION_ICON_MAP[label] || Folder;
+    const active = activeSection === id;
+    return (
+      <div
+        onClick={() => setActiveSection(active ? null : id)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '10px',
+          padding: '11px 14px', borderRadius: '10px',
+          background: active ? 'var(--bg-color)' : 'var(--card-bg)',
+          border: `1.5px solid ${active ? '#667eea55' : 'var(--border-color)'}`,
+          marginBottom: '8px', cursor: 'pointer', transition: 'all 0.15s',
+        }}
+      >
+        <IconComp size={18} strokeWidth={1.75} style={{ color: active ? '#667eea' : 'var(--text-secondary)', flexShrink: 0 }} />
+        <span style={{ flex: 1, fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>{label}</span>
+        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{count} file{count !== 1 ? 's' : ''}</span>
+        <span style={{ fontSize: '14px', color: 'var(--text-secondary)', transition: 'transform 0.2s', transform: active ? 'rotate(90deg)' : 'none' }}>›</span>
+      </div>
+    );
+  };
 
   return (
     <div
@@ -169,50 +193,47 @@ export default function FilePickerModal({ onSelect, onClose, user }) {
       >
         {/* Header */}
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text-primary)' }}>Pick from Files</div>
-          </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center' }}><X size={18} strokeWidth={2} /></button>
+          <div style={{ flex: 1, fontWeight: 700, fontSize: '15px', color: 'var(--text-primary)' }}>Pick from Files</div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px', display: 'flex', alignItems: 'center' }}>
+            <X size={18} strokeWidth={2} />
+          </button>
         </div>
 
         {/* Search */}
         <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border-color)', flexShrink: 0 }}>
           <input
             type="text"
-            placeholder="Search files…"
+            placeholder="Search files, subjects, classrooms…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             style={{
               width: '100%', padding: '7px 12px', borderRadius: '8px',
               border: '1px solid var(--border-color)', background: 'var(--bg-color)',
-              color: 'var(--text-primary)', fontSize: '13px', boxSizing: 'border-box',
-              outline: 'none',
+              color: 'var(--text-primary)', fontSize: '13px', boxSizing: 'border-box', outline: 'none',
             }}
           />
         </div>
 
         {/* Content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px' }}>
+          {error && <p style={{ color: '#dc2626', fontSize: '12px', marginBottom: '10px' }}>{error}</p>}
           {loading ? (
             <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '32px 0' }}>Loading…</p>
-          ) : error ? (
-            <p style={{ color: '#dc2626', textAlign: 'center', padding: '16px' }}>{error}</p>
+          ) : sections.size === 0 ? (
+            <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '32px 0', fontSize: '13px' }}>
+              {search ? 'No files match your search.' : 'No files found.'}
+            </p>
           ) : (
-            <>
-              <SectionHeader id="docs" icon={<FileText size={20} strokeWidth={1.75} />} label="Documents" count={docFiles.length} />
-              {activeSection === 'docs' && (
-                <div style={{ marginBottom: '12px', paddingLeft: '4px' }}>
-                  {renderFiles(docFiles, 'No documents found.')}
-                </div>
-              )}
-
-              <SectionHeader id="chat" icon={<MessageSquare size={20} strokeWidth={1.75} />} label="Chat Files" count={chatFiles.length} />
-              {activeSection === 'chat' && (
-                <div style={{ marginBottom: '12px', paddingLeft: '4px' }}>
-                  {renderFiles(chatFiles, 'No chat files found.')}
-                </div>
-              )}
-            </>
+            Array.from(sections.entries()).map(([label, files]) => (
+              <div key={label}>
+                <SectionHeader id={label} label={label} count={files.length} />
+                {activeSection === label && (
+                  <div style={{ marginBottom: '12px', paddingLeft: '4px' }}>
+                    {renderFiles(files, `No files in ${label}.`)}
+                  </div>
+                )}
+              </div>
+            ))
           )}
         </div>
       </div>

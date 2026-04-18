@@ -1,11 +1,14 @@
-import React, { useState, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { authAPI } from '../services/api';
 import '../styles/Auth.css';
 import { Eye } from 'lucide-react';
 
 const Signup = ({ onAuthSuccess }) => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const inviteToken = searchParams.get('invite') || '';
+
   const [formData, setFormData] = useState({
     email: '',
     username: '',
@@ -18,6 +21,7 @@ const Signup = ({ onAuthSuccess }) => {
   });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [inviteInfo, setInviteInfo] = useState(null);
   const pwRef = useRef(null);
   const confirmPwRef = useRef(null);
 
@@ -29,11 +33,23 @@ const Signup = ({ onAuthSuccess }) => {
     padding: '3px 8px', lineHeight: 1.3, userSelect: 'none',
   };
 
+  // Validate invite token on mount if present
+  useEffect(() => {
+    if (!inviteToken) return;
+    authAPI.checkInvite(inviteToken)
+      .then((res) => {
+        if (res.data.valid) {
+          setInviteInfo({ inviter_name: res.data.inviter_name, invited_email: res.data.invited_email });
+          if (res.data.invited_email) {
+            setFormData(f => ({ ...f, email: res.data.invited_email }));
+          }
+        }
+      })
+      .catch(() => {});
+  }, [inviteToken]);
+
   const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+    setFormData({ ...formData, [e.target.name]: e.target.value });
     setError('');
   };
 
@@ -41,61 +57,27 @@ const Signup = ({ onAuthSuccess }) => {
     e.preventDefault();
     setError('');
 
-    if (!formData.fullName.trim()) {
-      setError('Full name is required');
-      return;
-    }
-    if (!formData.username.trim()) {
-      setError('Username is required');
-      return;
-    }
-    if (!formData.email.trim()) {
-      setError('Email is required');
-      return;
-    }
-    if (!formData.college.trim()) {
-      setError('College is required');
-      return;
-    }
-    if (!formData.department.trim()) {
-      setError('Department is required');
-      return;
-    }
-    if (!formData.password) {
-      setError('Password is required');
-      return;
-    }
-    if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
-    if (formData.password.length < 8) {
-      setError('Password must be at least 8 characters');
-      return;
-    }
-    if (!/[A-Z]/.test(formData.password)) {
-      setError('Password must contain at least one uppercase letter');
-      return;
-    }
-    if (!/[a-z]/.test(formData.password)) {
-      setError('Password must contain at least one lowercase letter');
-      return;
-    }
-    if (!/[0-9]/.test(formData.password)) {
-      setError('Password must contain at least one number');
-      return;
-    }
+    if (!formData.fullName.trim()) { setError('Full name is required'); return; }
+    if (!formData.username.trim()) { setError('Username is required'); return; }
+    if (!formData.email.trim()) { setError('Email is required'); return; }
+    if (!formData.college.trim()) { setError('College is required'); return; }
+    if (!formData.department.trim()) { setError('Department is required'); return; }
+    if (!formData.password) { setError('Password is required'); return; }
+    if (formData.password !== formData.confirmPassword) { setError('Passwords do not match'); return; }
+    if (formData.password.length < 8) { setError('Password must be at least 8 characters'); return; }
+    if (!/[A-Z]/.test(formData.password)) { setError('Password must contain at least one uppercase letter'); return; }
+    if (!/[a-z]/.test(formData.password)) { setError('Password must contain at least one lowercase letter'); return; }
+    if (!/[0-9]/.test(formData.password)) { setError('Password must contain at least one number'); return; }
 
     setIsLoading(true);
-
     try {
       const { confirmPassword, ...signupData } = formData;
+      if (inviteToken) signupData.invite_token = inviteToken;
       const response = await authAPI.signup(signupData);
       onAuthSuccess(response.data.user, response.data.token);
       navigate('/classrooms');
     } catch (err) {
-      const errorMsg = err.response?.data?.error || 'Signup failed. Please try again.';
-      setError(errorMsg);
+      setError(err.response?.data?.error || 'Signup failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -107,9 +89,16 @@ const Signup = ({ onAuthSuccess }) => {
         <h1>Join IAPS</h1>
         <h2>Create Your Account</h2>
 
-        {error && (
-          <div className="error-message">{error}</div>
+        {inviteInfo && (
+          <div style={{
+            background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8,
+            padding: '10px 14px', marginBottom: 16, fontSize: 14, color: '#166534',
+          }}>
+            You were invited by <strong>{inviteInfo.inviter_name}</strong>
+          </div>
         )}
+
+        {error && <div className="error-message">{error}</div>}
 
         <form onSubmit={handleSubmit}>
           <div className="form-row">

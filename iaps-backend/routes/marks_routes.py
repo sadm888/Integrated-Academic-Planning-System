@@ -415,6 +415,176 @@ def update_analytics_visibility(subject_id, file_id):
         return jsonify({'error': 'Failed to update visibility'}), 500
 
 
+# ── Shared score helper ───────────────────────────────────────────────────────
+
+def _compute_weighted_score(entries):
+    """
+    Given a list of exam entry dicts, return the weighted percentage score
+    (0–100) or None if there are no entries or zero total weightage.
+    """
+    if not entries:
+        return None
+    total_weight = sum(float(e.get('weightage', 0)) for e in entries)
+    if total_weight == 0:
+        return None
+    weighted_sum = sum(
+        (float(e.get('marks_obtained', 0)) / float(e.get('max_marks', 1)))
+        * float(e.get('weightage', 0))
+        for e in entries
+        if float(e.get('max_marks', 0)) > 0  # guard against zero/missing max_marks
+    )
+    return round(weighted_sum, 2)
+
+
+def _semester_label(sem):
+    """Human-readable label for a semester document."""
+    label = sem.get('name') or f"{sem.get('type', '').capitalize()} {sem.get('year', '')}".strip()
+    if sem.get('session'):
+        label += f" · {sem['session']}"
+    return label
+
+
+# ── Cross-semester Trend ──────────────────────────────────────────────────────
+
+@marks_bp.route('/trend/<classroom_id>', methods=['GET'])
+@token_required
+def get_marks_trend(classroom_id):
+    """
+    Per-semester overall performance for the calling user across all semesters
+    in a classroom. Subjects are unique per semester so we compute an overall
+    average score per semester rather than tracking subject names across them.
+
+    Response shape:
+      {
+        "semesters": [
+          {
+            "semester_id": "...",
+            "semester_name": "Sem 4 (Even) 2024-28",
+            "overall_score": 78.5,          // avg of subjects with scores, or null
+            "subjects": [
+              {"name": "IT250", "score": 82.5, "grade": "A"},
+              {"name": "IT251", "score": null, "grade": ""}
+            ]
+          }
+        ]
+      }
+    """
+    from database import get_db
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+
+        classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
+        if not classroom or not is_member_of_classroom(classroom, user_id):
+            return jsonify({'error': 'Access denied'}), 403
+
+        # Sort by ObjectId — always present, naturally time-ordered
+        semesters = list(db.semesters.find(
+            {'classroom_id': classroom_id},
+            {'_id': 1, 'name': 1, 'type': 1, 'year': 1, 'session': 1}
+        ).sort('_id', 1))
+
+        result = []
+        for sem in semesters:
+            sem_id = str(sem['_id'])
+            subjects = list(db.subjects.find(
+                {'semester_id': sem_id, 'classroom_id': classroom_id},
+                {'_id': 1, 'name': 1}
+            ))
+
+            sem_subjects = []
+            scored = []
+            for sub in subjects:
+                marks_doc = db.subject_marks.find_one(
+                    {'subject_id': str(sub['_id']), 'user_id': user_id}
+                )
+                entries = marks_doc.get('entries', []) if marks_doc else []
+                score = _compute_weighted_score(entries)
+                grade = marks_doc.get('grade', '') if marks_doc else ''
+
+                sem_subjects.append({'name': sub['name'], 'score': score, 'grade': grade})
+                if score is not None:
+                    scored.append(score)
+
+            overall = round(sum(scored) / len(scored), 2) if scored else None
+            result.append({
+                'semester_id': sem_id,
+                'semester_name': _semester_label(sem),
+                'overall_score': overall,
+                'subjects': sem_subjects,
+            })
+
+        return jsonify({'semesters': result}), 200
+    except Exception as e:
+        logger.error(f"Marks trend error: {e}")
+        return jsonify({'error': 'Failed to fetch marks trend'}), 500
+
+
+@marks_bp.route('/semester-analytics/<semester_id>', methods=['GET'])
+@token_required
+def get_semester_analytics(semester_id):
+    """
+    Per-subject breakdown for one semester (bar chart + radar chart data).
+
+    Response shape:
+      {
+        "semester_name": "...",
+        "is_cr": false,
+        "subjects": [
+          {
+            "subject_id": "...",
+            "name": "IT250",
+            "score": 82.5,
+            "grade": "A",
+            "entries": [{"name": "Mid 1", "max_marks": 50, "marks_obtained": 42, "weightage": 40}]
+          }
+        ]
+      }
+    """
+    from database import get_db
+    try:
+        user_id = request.user['user_id']
+        db = get_db()
+
+        semester = db.semesters.find_one({'_id': ObjectId(semester_id)})
+        if not semester:
+            return jsonify({'error': 'Semester not found'}), 404
+
+        classroom = db.classrooms.find_one({'_id': ObjectId(semester['classroom_id'])})
+        if not classroom or not is_member_of_classroom(classroom, user_id):
+            return jsonify({'error': 'Access denied'}), 403
+
+        is_cr = user_id in [str(c) for c in semester.get('cr_ids', [])]
+
+        # semester['classroom_id'] is stored as string; subjects also store it as string
+        subjects = list(db.subjects.find(
+            {'semester_id': semester_id, 'classroom_id': semester['classroom_id']},
+            {'_id': 1, 'name': 1}
+        ))
+
+        result_subjects = []
+        for sub in subjects:
+            sub_id = str(sub['_id'])
+            marks_doc = db.subject_marks.find_one({'subject_id': sub_id, 'user_id': user_id})
+            entries = marks_doc.get('entries', []) if marks_doc else []
+            result_subjects.append({
+                'subject_id': sub_id,
+                'name': sub['name'],
+                'score': _compute_weighted_score(entries),
+                'grade': marks_doc.get('grade', '') if marks_doc else '',
+                'entries': entries,
+            })
+
+        return jsonify({
+            'semester_name': _semester_label(semester),
+            'is_cr': is_cr,
+            'subjects': result_subjects,
+        }), 200
+    except Exception as e:
+        logger.error(f"Semester analytics error: {e}")
+        return jsonify({'error': 'Failed to fetch semester analytics'}), 500
+
+
 @marks_bp.route('/analytics/file/<file_id>', methods=['GET'])
 def serve_analytics_file(file_id):
     """Serve analytics file. Auth via ?token= query param."""

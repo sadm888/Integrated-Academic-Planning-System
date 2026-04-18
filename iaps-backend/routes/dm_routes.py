@@ -29,6 +29,7 @@ from middleware import token_required, SECRET_KEY
 from socketio_instance import socketio
 from utils.mime_check import is_dangerous
 from utils import toggle_reaction
+from utils.encryption import encrypt_text, decrypt_text
 
 dm_bp = Blueprint('dm', __name__, url_prefix='/api/dm')
 logger = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ def _serialize_dm(msg):
         'sender_id': msg['sender_id'],
         'sender_name': msg.get('sender_name', ''),
         'profile_picture': msg.get('profile_picture'),
-        'text': None if deleted else msg.get('text'),
+        'text': None if deleted else decrypt_text(msg.get('text')),
         'created_at': msg['created_at'].strftime('%Y-%m-%dT%H:%M:%S.') + f"{msg['created_at'].microsecond // 1000:03d}Z",
         'read_by': msg.get('read_by', []),
         'deleted_for_everyone': deleted,
@@ -183,7 +184,7 @@ def send_dm(classroom_id):
                 if parent:
                     reply_to = {
                         'id': reply_to_id,
-                        'text': parent.get('text', ''),
+                        'text': decrypt_text(parent.get('text')) or '',
                         'sender_name': parent.get('sender_name', ''),
                         'sender_id': parent.get('sender_id', ''),
                     }
@@ -196,7 +197,7 @@ def send_dm(classroom_id):
             'receiver_id': to_user_id,
             'sender_name': sender_name,
             'profile_picture': profile_picture,
-            'text': text,
+            'text': encrypt_text(text),
             'file': None,
             'created_at': datetime.now(timezone.utc),
             'read_by': [user_id],
@@ -266,7 +267,7 @@ def upload_dm_file(classroom_id, to_user_id):
             'receiver_id': to_user_id,
             'sender_name': sender_name,
             'profile_picture': profile_picture,
-            'text': text,
+            'text': encrypt_text(text) if text else None,
             'file': {
                 'name': original_name,
                 'path': os.path.join('uploads', 'dm', stored_name),

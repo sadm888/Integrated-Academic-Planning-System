@@ -2209,8 +2209,17 @@ function SemesterCard({ semester, classroomId }) {
           {semester.subjects.length} subject{semester.subjects.length !== 1 ? 's' : ''}
         </p>
       )}
-      <div className="classroom-footer">
+      <div className="classroom-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span className="student-count">{semester.type}</span>
+        <button
+          onClick={e => { e.stopPropagation(); navigate(`/classroom/${classroomId}/semester/${semester.id}/analytics`); }}
+          style={{
+            background: 'none', border: 'none', color: '#667eea',
+            fontSize: '12px', fontWeight: 600, cursor: 'pointer', padding: 0,
+          }}
+        >
+          View Marks Trend →
+        </button>
       </div>
     </div>
   );

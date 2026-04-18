@@ -85,6 +85,11 @@ function Navbar({ user, onLogout, dmUnreadCount = 0 }) {
           )}
         </div>
         <NavLink
+          to="/study-tools"
+          label="Study Tools"
+          active={isActive('/study-tools')}
+        />
+        <NavLink
           to="/files"
           label="Files"
           active={isActive('/files')}

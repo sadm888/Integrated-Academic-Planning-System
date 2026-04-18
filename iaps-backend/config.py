@@ -32,6 +32,9 @@ class Config:
     COOKIE_SAMESITE = os.getenv('COOKIE_SAMESITE', 'Lax')
     COOKIE_HTTPONLY = True
 
+    # AI Study Tools
+    GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+
     # Google Calendar OAuth2
     GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
     GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')

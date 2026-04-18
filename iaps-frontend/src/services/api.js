@@ -51,6 +51,8 @@ export const authAPI = {
   signup: (data) => api.post('/auth/signup', data),
   login: (data) => api.post('/auth/login', data),
   verify: () => api.get('/auth/verify'),
+  sendInvite: (email) => api.post('/auth/send-invite', { email }),
+  checkInvite: (token) => api.get(`/auth/check-invite/${token}`),
 };
 
 // Classroom endpoints
@@ -129,6 +131,8 @@ export const marksAPI = {
   deleteAnalytics: (subjectId, fileId) => api.delete(`/marks/analytics/${subjectId}/${fileId}`),
   updateAnalyticsVisibility: (subjectId, fileId, visibility) => api.post(`/marks/analytics/${subjectId}/${fileId}/visibility`, { visibility }),
   analyticsFileUrl: (fileId) => fileUrl(`marks/analytics/file/${fileId}`),
+  getTrend: (classroomId) => api.get(`/marks/trend/${classroomId}`),
+  getSemesterAnalytics: (semesterId) => api.get(`/marks/semester-analytics/${semesterId}`),
 };
 
 // Google Calendar endpoints
@@ -420,6 +424,41 @@ export const attendanceAPI = {
     api.delete(`/attendance/semester/${semesterId}/record/${sessionId}/attachment`),
   proofUrl: (storedName) => fileUrl(`attendance/proof/${storedName}`),
   getMyProofs: () => api.get('/attendance/my-proofs'),
+};
+
+// AI Study Tools endpoints  (all per-document — no subject/semester dependency)
+export const aiAPI = {
+  // ── PDF management ────────────────────────────────────────────────────────
+  uploadPdf: (formData) =>
+    api.post('/ai/pdf/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  listPdfs:          ()                  => api.get('/ai/pdf/list'),
+  deletePdf:         (pdfId)             => api.delete(`/ai/pdf/${pdfId}`),
+  listResourcePdfs:  ()                  => api.get('/ai/pdf/list-resources'),
+  importResourcePdf: (resourceId, sourceType = 'academic') => api.post('/ai/pdf/import-resource', { resource_id: resourceId, source_type: sourceType }),
+
+  // ── Per-document tools ────────────────────────────────────────────────────
+  summarize:          (pdfId) => api.post(`/ai/pdf/${pdfId}/summarize`),
+  chat:               (pdfId, question, history = [], opts = {}) =>
+    api.post(`/ai/pdf/${pdfId}/chat`, { question, history, ...opts }),
+  generateQuiz:       (pdfId, options)   => api.post(`/ai/pdf/${pdfId}/quiz/generate`, options),
+  saveQuizResult:     (pdfId, data)      => api.post(`/ai/pdf/${pdfId}/quiz/result`, data),
+  gradeQuiz:          (pdfId, answers)   => api.post(`/ai/pdf/${pdfId}/quiz/grade`, { answers }),
+  generateFlashcards: (pdfId, options)   => api.post(`/ai/pdf/${pdfId}/flashcards/generate`, options),
+  getDeck:            (pdfId)            => api.get(`/ai/pdf/${pdfId}/flashcards/deck`),
+  saveDeck:           (pdfId, cards)     => api.post(`/ai/pdf/${pdfId}/flashcards/deck`, { cards }),
+  generateMindmap:    (pdfId)            => api.post(`/ai/pdf/${pdfId}/mindmap`),
+  extractFormulaSheet:(pdfId, opts = {}) => api.post(`/ai/pdf/${pdfId}/formula-sheet`, opts),
+  analysePastPapers:  (pdfId)            => api.post(`/ai/pdf/${pdfId}/past-paper-analyse`),
+  generateMockTest:   (pdfId, options)   => api.post(`/ai/pdf/${pdfId}/mock-test/generate`, options),
+  generateMockPaper:  (pdfId, options)   => api.post(`/ai/pdf/${pdfId}/mock-paper/generate`, options),
+  analysePattern:     (pdfId, formData)  => api.post(`/ai/pdf/${pdfId}/mock-paper/analyse-pattern`, formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  getPerformance:     (pdfId)            => api.get(`/ai/pdf/${pdfId}/performance`),
+  getRagMetrics:      (pdfId)            => api.get(`/ai/pdf/${pdfId}/rag-metrics`),
+  studyPlanner:       (pdfId, options)   => api.post(`/ai/pdf/${pdfId}/study-planner`, options),
+
+  // ── Semester-level (classroom chat summary) ───────────────────────────────
+  chatSummarise: (semesterId, opts = {}) =>
+    api.post(`/ai/semester/${semesterId}/chat-summarise`, opts),
 };
 
 export default api;

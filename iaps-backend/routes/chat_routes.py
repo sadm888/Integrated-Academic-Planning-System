@@ -23,6 +23,7 @@ from werkzeug.utils import secure_filename
 
 from middleware import token_required, SECRET_KEY
 from socketio_instance import socketio
+from utils.encryption import encrypt_text, decrypt_text
 from utils.mime_check import is_dangerous
 from utils import toggle_reaction
 
@@ -98,7 +99,7 @@ def _serialize_message(msg, profile_picture=None):
         'username': msg['username'],
         'full_name': msg.get('full_name') or '',
         'profile_picture': profile_picture,
-        'text': None if deleted else msg.get('text'),
+        'text': None if deleted else decrypt_text(msg.get('text')),
         'created_at': msg['created_at'].isoformat().replace('+00:00', '') + 'Z',
         'deleted_for_everyone': deleted,
         'reactions': msg.get('reactions', []),
@@ -260,7 +261,7 @@ def handle_send_message(data):
             if ref and not ref.get('deleted_for_everyone'):
                 reply_to = {
                     'id': str(ref['_id']),
-                    'text': (ref.get('text') or '')[:120],
+                    'text': (decrypt_text(ref.get('text')) or '')[:120],
                     'username': ref.get('username', ''),
                     'full_name': ref.get('full_name', ''),
                     'has_file': bool(ref.get('file')),
@@ -273,7 +274,7 @@ def handle_send_message(data):
         'user_id': user_data['user_id'],
         'username': user_data['username'],
         'full_name': user_data.get('full_name', ''),
-        'text': text,
+        'text': encrypt_text(text),
         'file': None,
         'created_at': datetime.now(timezone.utc),
     }
@@ -414,7 +415,7 @@ def upload_file(semester_id):
                 if ref and not ref.get('deleted_for_everyone'):
                     upload_reply_to = {
                         'id': str(ref['_id']),
-                        'text': (ref.get('text') or '')[:120],
+                        'text': (decrypt_text(ref.get('text')) or '')[:120],
                         'username': ref.get('username', ''),
                         'full_name': ref.get('full_name', ''),
                         'has_file': bool(ref.get('file')),
@@ -427,7 +428,7 @@ def upload_file(semester_id):
             'user_id': user_id,
             'username': username,
             'full_name': full_name,
-            'text': text,
+            'text': encrypt_text(text) if text else None,
             'file': {
                 'name': original_name,
                 'path': os.path.join('uploads', 'chat', stored_name),

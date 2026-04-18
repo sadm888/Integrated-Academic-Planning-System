@@ -17,6 +17,7 @@ export default function SemesterSubnav({ classroomId, semesterId, active, childr
     { key: 'chat',       label: 'Chat',                to: `${base}/chat`,              isButton: true },
     ...(!resourcesHidden  ? [{ key: 'resources',  label: 'Resources',         to: `${base}/files` }] : []),
     { key: 'marks',      label: 'Marks',               to: `${base}/marks` },
+    { key: 'analytics',  label: 'Analytics',           to: `${base}/analytics` },
     { key: 'timetable',  label: 'Timetable',           to: `${base}/timetable` },
     { key: 'calendar',   label: 'Academic Calendar',   to: `${base}/academic-calendar` },
     ...(!attendanceHidden ? [{ key: 'attendance', label: 'Attendance',        to: `${base}/attendance` }] : []),

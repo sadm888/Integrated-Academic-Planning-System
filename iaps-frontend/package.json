@@ -7,8 +7,10 @@
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
     "axios": "^1.6.0",
+    "chart.js": "^4.5.1",
     "lucide-react": "^0.577.0",
     "react": "^18.2.0",
+    "react-chartjs-2": "^5.3.1",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.21.0",
     "socket.io-client": "^4.8.3"
