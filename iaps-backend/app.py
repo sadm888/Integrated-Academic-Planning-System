@@ -1,6 +1,3 @@
-import eventlet
-eventlet.monkey_patch()
-
 from flask import Flask, jsonify
 from flask_cors import CORS
 from config import Config
@@ -84,16 +81,20 @@ def create_app():
     _os.makedirs(_os.path.join(_os.getcwd(), 'uploads', 'avatars'), exist_ok=True)
 
     # Socket.IO needs the same origin list as CORS, so this has to run after that's built.
-    # eventlet mode matches the Procfile's `-k eventlet` gunicorn worker (which already
-    # monkey-patches the process) — one greenlet-scheduled process can hold many more
-    # concurrent idle sockets than real OS threads.
+    # threading mode: no monkey-patching required (matches the Procfile's `-k gthread`
+    # worker). Eventlet was tried and reverted — its monkey-patch retrofit of locks
+    # created before the patch runs is unreliable on this Python version (breaks
+    # pymongo's TLS handshake to Atlas: "SSLSocket is not a GreenSSLSocket"), and
+    # gunicorn's own startup creates some of those locks before our code ever runs.
+    # threading mode falls back to long-polling instead of native websockets, which
+    # is less efficient but actually works — correct beats fast here.
     # REDIS_URL (unset by default) enables cross-instance event fan-out via a message
     # queue; without it, everything still works exactly as today on a single instance.
     redis_url = os.environ.get('REDIS_URL', '').strip()
     socketio.init_app(
         app,
         cors_allowed_origins=allowed_origins,
-        async_mode='eventlet',
+        async_mode='threading',
         message_queue=redis_url or None,
         max_http_buffer_size=50 * 1024 * 1024,  # allow largish file/image uploads over the socket
     )
