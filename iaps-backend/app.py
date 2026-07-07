@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+
 from flask import Flask, jsonify
 from flask_cors import CORS
 from config import Config
