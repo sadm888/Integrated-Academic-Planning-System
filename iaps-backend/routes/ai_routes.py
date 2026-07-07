@@ -36,6 +36,7 @@ import shutil
 import logging
 import threading
 import time
+from collections import OrderedDict
 from uuid import uuid4
 from datetime import datetime, timezone
 
@@ -44,6 +45,8 @@ from bson import ObjectId
 from werkzeug.utils import secure_filename
 
 from middleware import token_required, is_member_of_classroom
+from celery_app import celery_app
+from utils.storage import save_file, resolve_local, delete_file
 
 ai_bp = Blueprint('ai', __name__, url_prefix='/api/ai')
 logger = logging.getLogger(__name__)
@@ -68,7 +71,11 @@ _groq_lock       = threading.Lock()
 _cross_encoder   = None   # None = not yet tried; False = load failed (sentinel)
 _ce_lock         = threading.Lock()
 _index_semaphore = threading.Semaphore(1)  # serialize ChromaDB writes
-_bm25_cache: dict = {}   # pdf_id -> BM25Okapi instance (rebuilt when chunk count changes)
+# pdf_id -> (chunk_count, BM25Okapi instance); rebuilt when chunk count changes.
+# Bounded LRU — without a cap this grows forever as more distinct PDFs get queried
+# over a long-running process's lifetime.
+_BM25_CACHE_MAX = 200
+_bm25_cache: 'OrderedDict[str, tuple]' = OrderedDict()
 _bm25_cache_lock = threading.Lock()
 
 
@@ -104,12 +111,21 @@ def _get_embedder():
 
 
 def _get_chroma():
+    """Local disk-backed by default. Set CHROMA_HOST (+ optional CHROMA_PORT) to
+    point at a standalone Chroma server instead — required once running more than
+    one app instance, since a local PersistentClient's index isn't shared across
+    processes/machines."""
     global _chroma_client
     if _chroma_client is None:
         with _chroma_lock:
             if _chroma_client is None:
                 import chromadb
-                _chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
+                chroma_host = os.environ.get('CHROMA_HOST', '').strip()
+                if chroma_host:
+                    chroma_port = int(os.environ.get('CHROMA_PORT', '8000'))
+                    _chroma_client = chromadb.HttpClient(host=chroma_host, port=chroma_port)
+                else:
+                    _chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
     return _chroma_client
 
 
@@ -230,7 +246,10 @@ def _bm25_scores(pdf_id: str, chunks: list, query: str) -> list:
             if entry is None or entry[0] != n:
                 tokenized = [c.lower().split() for c in chunks]
                 _bm25_cache[pdf_id] = (n, BM25Okapi(tokenized))
+            _bm25_cache.move_to_end(pdf_id)
             bm25 = _bm25_cache[pdf_id][1]
+            while len(_bm25_cache) > _BM25_CACHE_MAX:
+                _bm25_cache.popitem(last=False)
         return bm25.get_scores(query.lower().split()).tolist()
     except Exception as exc:
         logger.warning(f"BM25 scoring failed: {exc}")
@@ -375,13 +394,17 @@ def _clean_prose(text: str) -> str:
 
 
 def _index_pdf(path: str, pdf_id: str):
-    """Background: extract, chunk, embed and store a PDF in its own ChromaDB collection."""
+    """Background: extract, chunk, embed and store a PDF in its own ChromaDB collection.
+    `path` is a storage reference (local path, or 's3://...') — resolved to a local
+    file here so this works whether the caller is the same process/machine that
+    saved the upload, or a separate Celery worker instance."""
     from database import get_db
     logger.info(f"Indexing PDF {pdf_id} …")
+    local_path = resolve_local(path, AI_PDF_DIR, f'{pdf_id}.pdf')
     with _index_semaphore:  # serialize writes to avoid ChromaDB lock contention
         try:
             import fitz  # PyMuPDF
-            doc  = fitz.open(path)
+            doc  = fitz.open(local_path)
             text = '\n'.join(page.get_text() for page in doc)
             doc.close()
 
@@ -429,6 +452,22 @@ def _index_pdf(path: str, pdf_id: str):
                 pass
 
 
+@celery_app.task(name='ai.index_pdf', ignore_result=True)
+def _index_pdf_task(path: str, pdf_id: str):
+    _index_pdf(path, pdf_id)
+
+
+def _dispatch_index_pdf(path: str, pdf_id: str):
+    """Run PDF indexing via Celery when REDIS_URL is configured, else the
+    original in-process background thread. Either way this call is fire-and-forget
+    — callers poll the `indexed`/`chunk_count`/`index_error` fields on the
+    ai_user_pdfs doc (set by _index_pdf above) to know when it's done."""
+    if os.environ.get('REDIS_URL', '').strip():
+        _index_pdf_task.delay(path, pdf_id)
+    else:
+        threading.Thread(target=_index_pdf, args=(path, pdf_id), daemon=True).start()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PDF management (user-scoped, no subject/semester)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -457,19 +496,21 @@ def upload_pdf():
         os.remove(dst)
         return jsonify({'error': 'File exceeds 20 MB limit'}), 413
 
+    stored_ref = save_file(dst, f'ai_pdfs/{pdf_id}.pdf')
+
     db = get_db()
     db.ai_user_pdfs.insert_one({
         'pdf_id':      pdf_id,
         'user_id':     user_id,
         'filename':    filename,
-        'stored':      f'{pdf_id}.pdf',
+        'stored':      stored_ref,
         'size':        size,
         'indexed':     False,
         'source':      'upload',
         'uploaded_at': datetime.now(timezone.utc),
     })
 
-    threading.Thread(target=_index_pdf, args=(dst, pdf_id), daemon=True).start()
+    _dispatch_index_pdf(stored_ref, pdf_id)
     return jsonify({'pdf_id': pdf_id, 'filename': filename, 'size': size}), 201
 
 
@@ -502,9 +543,7 @@ def delete_pdf(pdf_id):
         return jsonify({'error': str(e)}), 403
 
     # Remove file
-    path = os.path.join(AI_PDF_DIR, doc.get('stored', f'{pdf_id}.pdf'))
-    if os.path.exists(path):
-        os.remove(path)
+    delete_file(doc.get('stored', ''), AI_PDF_DIR, f'{pdf_id}.pdf')
 
     # Remove ChromaDB collection
     try:
@@ -664,21 +703,23 @@ def import_resource_pdf():
     pdf_id = str(uuid4())
     dst    = os.path.join(AI_PDF_DIR, f'{pdf_id}.pdf')
     shutil.copy2(src, dst)
+    size   = os.path.getsize(dst)
+    stored_ref = save_file(dst, f'ai_pdfs/{pdf_id}.pdf')
 
     db.ai_user_pdfs.insert_one({
         'pdf_id':      pdf_id,
         'user_id':     user_id,
         'filename':    filename,
-        'stored':      f'{pdf_id}.pdf',
-        'size':        os.path.getsize(dst),
+        'stored':      stored_ref,
+        'size':        size,
         'indexed':     False,
         'source':      source_type,
         'resource_id': resource_id,
         'uploaded_at': datetime.now(timezone.utc),
     })
 
-    threading.Thread(target=_index_pdf, args=(dst, pdf_id), daemon=True).start()
-    return jsonify({'pdf_id': pdf_id, 'filename': filename, 'size': os.path.getsize(dst)}), 201
+    _dispatch_index_pdf(stored_ref, pdf_id)
+    return jsonify({'pdf_id': pdf_id, 'filename': filename, 'size': size}), 201
 
 
 # ══════════════════════════════════════════════════════════════════════════════

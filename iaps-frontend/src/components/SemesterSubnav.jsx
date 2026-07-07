@@ -9,7 +9,6 @@ import { Link, useNavigate } from 'react-router-dom';
 export default function SemesterSubnav({ classroomId, semesterId, active, children }) {
   const navigate = useNavigate();
   const base = `/classroom/${classroomId}/semester/${semesterId}`;
-  const attendanceHidden = localStorage.getItem(`attendance_hidden_${semesterId}`) === 'true';
   const resourcesHidden  = localStorage.getItem(`resources_hidden_${semesterId}`)  === 'true';
 
   const tabs = [
@@ -20,7 +19,6 @@ export default function SemesterSubnav({ classroomId, semesterId, active, childr
     { key: 'analytics',  label: 'Analytics',           to: `${base}/analytics` },
     { key: 'timetable',  label: 'Timetable',           to: `${base}/timetable` },
     { key: 'calendar',   label: 'Academic Calendar',   to: `${base}/academic-calendar` },
-    ...(!attendanceHidden ? [{ key: 'attendance', label: 'Attendance',        to: `${base}/attendance` }] : []),
   ];
 
   return (

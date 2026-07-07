@@ -54,7 +54,6 @@ def create_subject():
         if not semester:
             return jsonify({'error': 'Semester not found'}), 404
 
-        # Verify classroom membership
         classroom = db.classrooms.find_one({'_id': ObjectId(classroom_id)})
         if not classroom or not is_member_of_classroom(classroom, user_id):
             return jsonify({'error': 'Access denied'}), 403

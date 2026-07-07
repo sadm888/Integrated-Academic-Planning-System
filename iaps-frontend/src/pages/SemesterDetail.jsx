@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import SemesterSubnav from '../components/SemesterSubnav';
-import { semesterAPI, subjectAPI, documentAPI, todoAPI, classroomAPI, announcementAPI, linksAPI, timetableAPI, attendanceAPI, BACKEND_URL } from '../services/api';
+import { semesterAPI, subjectAPI, documentAPI, todoAPI, classroomAPI, announcementAPI, linksAPI, timetableAPI, BACKEND_URL } from '../services/api';
 import '../styles/Classroom.css';
-import { Link as LinkIcon, X, FileText, Megaphone, Clock, ClipboardList, Bell, BellOff, ChevronDown, ChevronRight } from 'lucide-react';
+import { Link as LinkIcon, X, FileText, Megaphone, Clock, ClipboardList, ChevronDown, ChevronRight } from 'lucide-react';
 
 function SemesterDetail({ user }) {
   const { classroomId, semesterId } = useParams();
@@ -65,9 +65,6 @@ function SemesterDetail({ user }) {
   const [confirmDeleteSemester, setConfirmDeleteSemester] = useState(false);
   const [deleteSemesterLoading, setDeleteSemesterLoading] = useState(false);
 
-  // Attendance summary cards
-  const [attendanceSummary, setAttendanceSummary] = useState([]);
-
   // Today's timetable classes
   const [todayClasses, setTodayClasses] = useState([]);
   const [todayDay, setTodayDay] = useState('');
@@ -77,36 +74,6 @@ function SemesterDetail({ user }) {
   const [upcomingExams, setUpcomingExams] = useState([]);
   const [expandedExam, setExpandedExam] = useState(null); // index
   const [expandedClass, setExpandedClass] = useState(null); // index
-  const [notifPermission, setNotifPermission] = useState(() =>
-    typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
-  );
-  const [notifEnabled, setNotifEnabled] = useState(() =>
-    localStorage.getItem(`exam_notifs_enabled_${semesterId}`) !== 'false'
-  );
-
-  const toggleNotif = () => {
-    const next = !notifEnabled;
-    setNotifEnabled(next);
-    localStorage.setItem(`exam_notifs_enabled_${semesterId}`, next ? 'true' : 'false');
-  };
-
-  const [attendanceVisible, setAttendanceVisible] = useState(() =>
-    localStorage.getItem(`attendance_hidden_${semesterId}`) !== 'true'
-  );
-  const [resourcesVisible, setResourcesVisible] = useState(() =>
-    localStorage.getItem(`resources_hidden_${semesterId}`) !== 'true'
-  );
-  const toggleAttendanceVisible = () => {
-    const next = !attendanceVisible;
-    setAttendanceVisible(next);
-    localStorage.setItem(`attendance_hidden_${semesterId}`, next ? 'false' : 'true');
-  };
-  const toggleResourcesVisible = () => {
-    const next = !resourcesVisible;
-    setResourcesVisible(next);
-    localStorage.setItem(`resources_hidden_${semesterId}`, next ? 'false' : 'true');
-  };
-
   useEffect(() => { loadAll(); }, [semesterId]);
 
   const loadAll = async () => {
@@ -124,22 +91,10 @@ function SemesterDetail({ user }) {
       loadLinks();
       loadTodayClasses();
       loadUpcomingExams();
-      loadAttendanceSummary();
     } catch (err) {
       setError('Failed to load semester');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadAttendanceSummary = async () => {
-    const hidden = localStorage.getItem(`attendance_hidden_${semesterId}`) === 'true';
-    if (hidden) return;
-    try {
-      const res = await attendanceAPI.getSummary(semesterId);
-      setAttendanceSummary(res.data.subjects || []);
-    } catch {
-      // Non-critical — attendance may not be set up yet
     }
   };
 
@@ -230,17 +185,6 @@ function SemesterDetail({ user }) {
       }
     } catch {
       // non-critical
-    }
-  };
-
-  const requestNotifPermission = async () => {
-    if (typeof Notification === 'undefined') return;
-    const result = await Notification.requestPermission();
-    setNotifPermission(result);
-    if (result === 'granted') {
-      setNotifEnabled(true);
-      localStorage.setItem(`exam_notifs_enabled_${semesterId}`, 'true');
-      loadUpcomingExams();
     }
   };
 
@@ -541,122 +485,6 @@ function SemesterDetail({ user }) {
       <div style={{ display: 'flex', gap: '30px', alignItems: 'flex-start' }}>
         {/* Left column */}
         <div style={{ flex: 1, minWidth: 0 }}>
-
-          {/* Notification Toggle Card */}
-          {notifPermission !== 'unsupported' && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: '14px',
-              background: 'var(--card-bg)', border: '1px solid var(--border-color)',
-              borderRadius: '12px', padding: '14px 18px', marginBottom: '20px',
-            }}>
-              <div style={{
-                width: '38px', height: '38px', borderRadius: '10px', flexShrink: 0,
-                background: (notifPermission === 'granted' && notifEnabled) ? 'rgba(102,126,234,0.1)' : 'var(--bg-color)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                {(notifPermission === 'granted' && notifEnabled)
-                  ? <Bell size={18} strokeWidth={1.75} style={{ color: '#667eea' }} />
-                  : <BellOff size={18} strokeWidth={1.75} style={{ color: 'var(--text-secondary)' }} />
-                }
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--text-primary)' }}>Exam Notifications</div>
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                  {notifPermission === 'denied'
-                    ? <>Blocked by browser. <a href="https://support.google.com/chrome/answer/3220216" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary-color)', textDecoration: 'none', fontWeight: 600 }}>How to allow →</a></>
-                    : notifPermission === 'default'
-                      ? 'Get browser alerts for upcoming exams.'
-                      : notifEnabled
-                        ? 'Alerts on for today/tomorrow exams.'
-                        : 'Notifications paused. Toggle on to re-enable.'}
-                </div>
-              </div>
-              {notifPermission === 'default' ? (
-                <button
-                  onClick={requestNotifPermission}
-                  style={{
-                    flexShrink: 0, padding: '6px 14px', borderRadius: '8px',
-                    border: 'none', background: '#667eea', color: 'white',
-                    fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-                  }}
-                >
-                  Enable
-                </button>
-              ) : notifPermission === 'denied' ? (
-                <span style={{
-                  flexShrink: 0, padding: '4px 10px', borderRadius: '8px',
-                  fontSize: '11px', fontWeight: 700,
-                  background: 'rgba(239,68,68,0.1)', color: '#ef4444',
-                }}>
-                  BLOCKED
-                </span>
-              ) : (
-                /* Left-right toggle switch */
-                <div
-                  onClick={toggleNotif}
-                  style={{
-                    flexShrink: 0, width: '44px', height: '24px', borderRadius: '12px',
-                    background: notifEnabled ? '#667eea' : 'var(--border-color)',
-                    position: 'relative', cursor: 'pointer',
-                    transition: 'background 0.2s',
-                  }}
-                >
-                  <div style={{
-                    position: 'absolute', top: '3px',
-                    left: notifEnabled ? '23px' : '3px',
-                    width: '18px', height: '18px', borderRadius: '50%',
-                    background: 'white',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-                    transition: 'left 0.2s',
-                  }} />
-                </div>
-              )}
-            </div>
-          )}
-
-
-          {notifPermission === 'granted' && (
-            <div style={{ marginTop: '-14px', marginBottom: '20px', paddingLeft: '4px' }}>
-              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                To fully revoke browser permission: click the{' '}
-                <strong style={{ fontWeight: 600 }}>lock icon</strong> in your address bar → Notifications → Block.
-              </span>
-            </div>
-          )}
-
-          {/* Tab Visibility */}
-          <div style={{
-            background: 'var(--card-bg)', border: '1px solid var(--border-color)',
-            borderRadius: '12px', padding: '14px 18px', marginBottom: '20px',
-          }}>
-            <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Tab Visibility
-            </div>
-            {[
-              { label: 'Attendance', visible: attendanceVisible, toggle: toggleAttendanceVisible },
-              { label: 'Resources',  visible: resourcesVisible,  toggle: toggleResourcesVisible  },
-            ].map(({ label, visible, toggle }) => (
-              <div key={label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
-                <span style={{ fontSize: '14px', color: 'var(--text-primary)', fontWeight: 500 }}>{label}</span>
-                <div
-                  onClick={toggle}
-                  style={{
-                    width: '44px', height: '24px', borderRadius: '12px',
-                    background: visible ? 'var(--primary-color)' : 'var(--border-color)',
-                    position: 'relative', cursor: 'pointer', transition: 'background 0.2s', flexShrink: 0,
-                  }}
-                >
-                  <div style={{
-                    position: 'absolute', top: '3px',
-                    left: visible ? '23px' : '3px',
-                    width: '18px', height: '18px', borderRadius: '50%',
-                    background: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-                    transition: 'left 0.2s',
-                  }} />
-                </div>
-              </div>
-            ))}
-          </div>
 
           {/* Upcoming Exams Widget */}
           {upcomingExams.length > 0 && (
@@ -986,51 +814,6 @@ function SemesterDetail({ user }) {
               </div>
             )}
           </div>
-
-          {/* Attendance summary cards (after subjects, before documents) */}
-          {attendanceSummary.length > 0 && (
-            <div className="classrooms-section" style={{ marginBottom: '20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                <h2 style={{ margin: 0, fontSize: '16px' }}>Attendance</h2>
-                <Link to={`/classroom/${classroomId}/semester/${semesterId}/attendance`} style={{ fontSize: '12px', color: 'var(--primary-color)', textDecoration: 'none', fontWeight: 600 }}>
-                  Full View →
-                </Link>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '10px' }}>
-                {attendanceSummary.map(s => {
-                  const colorVar = s.zone === 'green' ? 'var(--attendance-green)'
-                    : s.zone === 'yellow' ? 'var(--attendance-yellow)'
-                    : s.zone === 'orange' ? 'var(--attendance-orange)'
-                    : 'var(--attendance-red)';
-                  const attendedEff = s.attended + (s.leaves_count || 0);
-                  const belowCutoff = s.total > 0 && s.percentage < s.threshold;
-                  const statusText = s.total === 0
-                    ? 'No classes yet'
-                    : (belowCutoff && s.recoverable === false)
-                      ? `Cannot reach ${s.threshold}%`
-                      : belowCutoff
-                        ? `Attend ${s.must_attend} more`
-                        : s.leaves_left > 0
-                          ? `${s.leaves_left} ${s.leaves_left === 1 ? 'leave' : 'leaves'} left`
-                          : 'Fully safe';
-                  return (
-                    <div key={s.subject} style={{ background: 'var(--bg-color)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '12px 14px 0', overflow: 'hidden' }}>
-                      <p style={{ margin: '0 0 2px', fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{s.subject}</p>
-                      <p style={{ margin: '0 0 2px', fontSize: '12px', color: 'var(--text-primary)' }}>
-                        {attendedEff}/{s.total} · <span style={{ fontWeight: 700, color: colorVar }}>{s.percentage}%</span>
-                      </p>
-                      <p style={{ margin: '0 0 10px', fontSize: '12px', fontWeight: 600, color: s.total === 0 ? 'var(--text-secondary)' : colorVar }}>
-                        {statusText}
-                      </p>
-                      <div style={{ margin: '0 -14px', height: '3px', background: 'var(--border-color)' }}>
-                        <div style={{ width: `${Math.min(100, s.percentage)}%`, height: '100%', background: colorVar }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           {/* Documents */}
           <div className="classrooms-section">

@@ -395,10 +395,6 @@ export default function AcademicCalendar({ user }) {
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState(null);
 
-  // Push
-  const [pushLoading, setPushLoading] = useState(false);
-  const [clearGcalLoading, setClearGcalLoading] = useState(false);
-
   // Event detail modal (click to edit/delete individual event)
   const [editingEvent, setEditingEvent] = useState(null); // { event, index }
 
@@ -473,41 +469,6 @@ export default function AcademicCalendar({ user }) {
       loadData();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save');
-    }
-  };
-
-  const handlePush = async () => {
-    setPushLoading(true);
-    setError('');
-    try {
-      const res = await timetableAPI.pushAcademicCalendar(semesterId);
-      setSuccess((res.data.message || 'Pushed!') + ' If you\'ve pushed before, old events were replaced. May take a few minutes to appear.');
-    } catch (err) {
-      if (err.response?.data?.not_connected) {
-        setError('Connect Google Calendar first from the /calendar page.');
-      } else {
-        setError(err.response?.data?.error || 'Failed to push to Google Calendar.');
-      }
-    } finally {
-      setPushLoading(false);
-    }
-  };
-
-  const handleClearGcal = async () => {
-    if (!window.confirm('Remove all IAPS academic calendar events from your Google Calendar?')) return;
-    setClearGcalLoading(true);
-    setError('');
-    try {
-      const res = await timetableAPI.clearAcademicCalendarFromGcal(semesterId);
-      setSuccess(res.data.message);
-    } catch (err) {
-      if (err.response?.data?.not_connected) {
-        setError('Connect Google Calendar first from the /calendar page.');
-      } else {
-        setError(err.response?.data?.error || 'Failed to clear events.');
-      }
-    } finally {
-      setClearGcalLoading(false);
     }
   };
 
@@ -812,30 +773,6 @@ export default function AcademicCalendar({ user }) {
                 <Upload size={13} /> Re-upload
                 <input type="file" accept="image/*,.pdf" onChange={handleFileUpload} style={{ display: 'none' }} />
               </label>
-              <button
-                onClick={handlePush}
-                disabled={pushLoading || clearGcalLoading}
-                style={{ padding: '7px 14px', background: 'var(--success-color)', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '5px' }}
-              >
-                <Calendar size={13} /> {pushLoading ? 'Pushing…' : 'Push to GCal'}
-              </button>
-              <button
-                onClick={handleClearGcal}
-                disabled={clearGcalLoading || pushLoading}
-                style={{ padding: '7px 14px', background: '#dc2626', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '5px' }}
-              >
-                {clearGcalLoading ? 'Clearing…' : 'Clear from GCal'}
-              </button>
-            </>
-          )}
-          {!isCr && academicCal && (
-            <>
-              <button onClick={handlePush} disabled={pushLoading || clearGcalLoading} style={{ padding: '7px 14px', background: 'var(--success-color)', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <Calendar size={13} /> {pushLoading ? 'Pushing…' : 'Push to GCal'}
-              </button>
-              <button onClick={handleClearGcal} disabled={clearGcalLoading || pushLoading} style={{ padding: '7px 14px', background: '#dc2626', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                {clearGcalLoading ? 'Clearing…' : 'Clear from GCal'}
-              </button>
             </>
           )}
         </div>

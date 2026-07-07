@@ -225,7 +225,6 @@ function ClassroomDetail({ user, onDmRead }) {
       ]);
       const c = res.data.classroom;
       setClassroom(c);
-      // Load online status for all members
       if (c?.members?.length) {
         const memberIds = c.members.map(m => m.id || m._id).filter(Boolean);
         chatAPI.getOnlineStatus(memberIds)
@@ -234,17 +233,15 @@ function ClassroomDetail({ user, onDmRead }) {
       } else {
         setOnlineLoaded(true);
       }
-      // Load per-member DM send counts for CRs
+      // DM send-count stats are CR-only
       if (c?.is_cr) {
         dmAPI.getMemberStats(classroomId)
           .then(r => setMemberDmStats(r.data.stats || {}))
           .catch(() => {});
       }
-      // Load unread DM counts per sender for all members
       dmAPI.getUnreadBySender(classroomId)
         .then(r => setUnreadBySender(r.data.unread || {}))
         .catch(() => {});
-      // Load classroom activity (notifications)
       classroomAPI.getActivity(classroomId)
         .then(r => setActivity(r.data))
         .catch(() => {});

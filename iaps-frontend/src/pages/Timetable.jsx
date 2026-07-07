@@ -131,7 +131,7 @@ function CellChip({ cell, slot, day, onClick, isCr }) {
 }
 
 // Cell click → override modal (CR can edit; others can skip for themselves)
-function OverrideModal({ day, slot, cell, onClose, onSave, onDeleteOverride, selectedDate, isDayOverride, isCr, personalSkip, onAddPersonalSkip, onRemovePersonalSkip, onPushDay, onDeleteDay }) {
+function OverrideModal({ day, slot, cell, onClose, onSave, onDeleteOverride, selectedDate, isDayOverride, isCr, personalSkip, onAddPersonalSkip, onRemovePersonalSkip }) {
   const [action, setAction] = useState('cancel');
   const [scope, setScope] = useState('this_day');
   const [reason, setReason] = useState('');
@@ -149,8 +149,6 @@ function OverrideModal({ day, slot, cell, onClose, onSave, onDeleteOverride, sel
   const [skipReason, setSkipReason] = useState('');
   const [showSkipForm, setShowSkipForm] = useState(false);
   const [skipLoading, setSkipLoading] = useState(false);
-  // GCal single-day actions (used by CR branch)
-  const [gcalLoading, setGcalLoading] = useState(null); // 'push' | 'delete' | null
 
   const handleSave = async () => {
     setLoading(true);
@@ -395,32 +393,6 @@ function OverrideModal({ day, slot, cell, onClose, onSave, onDeleteOverride, sel
             >
               {deleting ? 'Removing...' : 'Remove Override'}
             </button>
-          </div>
-        )}
-
-        {/* GCal single-day actions — only for active (non-cancelled) classes */}
-        {(onPushDay || onDeleteDay) && cell?.subject && cell?.status !== 'cancelled' && (
-          <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '12px', marginBottom: '12px' }}>
-            <p style={{ margin: '0 0 8px', fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>Google Calendar — {selectedDate}</p>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                disabled={!!gcalLoading}
-                onClick={async () => { setGcalLoading('push'); try { await onPushDay(day, selectedDate); } finally { setGcalLoading(null); } }}
-                style={{ padding: '5px 12px', background: 'var(--success-color)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '12px' }}
-                title="Push (or re-push) this day's classes to GCal — replaces any existing events for this date"
-              >
-                {gcalLoading === 'push' ? 'Pushing…' : 'Push / Update GCal'}
-              </button>
-              <button
-                type="button"
-                disabled={!!gcalLoading}
-                onClick={async () => { setGcalLoading('delete'); try { await onDeleteDay(day, selectedDate); } finally { setGcalLoading(null); } }}
-                style={{ padding: '5px 12px', background: 'transparent', color: '#dc2626', border: '1.5px solid #dc2626', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '12px' }}
-              >
-                {gcalLoading === 'delete' ? 'Removing…' : 'Remove from GCal'}
-              </button>
-            </div>
           </div>
         )}
 
@@ -1011,11 +983,6 @@ export default function Timetable({ user }) {
     localStorage.setItem(`tt_offset_${semesterId}`, String(weekOffset));
   }, [view, weekOffset, semesterId]);
 
-  const [thisWeekLoading, setThisWeekLoading] = useState(false);
-  const [clearGcalLoading, setClearGcalLoading] = useState(false);
-  const [syncGcalLoading, setSyncGcalLoading] = useState(false);
-  const [showDayPicker, setShowDayPicker] = useState(false);
-  const [selectedPushDays, setSelectedPushDays] = useState([]);
 
   // Academic calendar events for week view (date → [{type, title}])
   const [acEvents, setAcEvents] = useState({});
@@ -1141,60 +1108,6 @@ export default function Timetable({ user }) {
 
 
 
-  const handleSyncGcal = async () => {
-    setSyncGcalLoading(true);
-    setError('');
-    try {
-      const res = await timetableAPI.pushThisWeek(semesterId, getWeekDate());
-      setSuccess(res.data.message + ' — GCal updated. May take a few minutes to appear.');
-    } catch (err) {
-      if (err.response?.data?.not_connected) {
-        setError('Connect Google Calendar first from the /calendar page.');
-      } else {
-        setError(err.response?.data?.error || 'Failed to sync.');
-      }
-    } finally {
-      setSyncGcalLoading(false);
-    }
-  };
-
-  const handlePushThisWeek = async (onlyDays = null) => {
-    setThisWeekLoading(true);
-    setError('');
-    try {
-      const res = await timetableAPI.pushThisWeek(semesterId, getWeekDate(), onlyDays);
-      setSuccess(res.data.message + ' — Events may take a few minutes to appear.');
-      setShowDayPicker(false);
-    } catch (err) {
-      if (err.response?.data?.not_connected) {
-        setError('Connect Google Calendar first from the /calendar page.');
-      } else {
-        setError(err.response?.data?.error || 'Failed to push this week.');
-      }
-    } finally {
-      setThisWeekLoading(false);
-    }
-  };
-
-  const handleClearGcal = async () => {
-    if (!window.confirm('Remove all IAPS timetable events from your Google Calendar?')) return;
-    setClearGcalLoading(true);
-    setError('');
-    try {
-      const res = await timetableAPI.clearTimetableFromCalendar(semesterId);
-      setSuccess(res.data.message);
-      setShowPushModal(false);
-    } catch (err) {
-      if (err.response?.data?.not_connected) {
-        setError('Connect Google Calendar first from the /calendar page.');
-      } else {
-        setError(err.response?.data?.error || 'Failed to clear events.');
-      }
-    } finally {
-      setClearGcalLoading(false);
-    }
-  };
-
   const handleSaveBase = async () => {
     try {
       // Include days that were in the original timetable OR have been edited in (e.g. Sat/Sun)
@@ -1219,10 +1132,8 @@ export default function Timetable({ user }) {
   // ── Override handling (week view) ─────────────────────────────────────────
 
   const handleWeekCellClick = (day, slot, cell) => {
-    // Non-CRs see a read-only view of the override modal (no actions available)
-    // isCr is passed through to the modal to control action visibility
-    // Calculate the actual date for this day in the current week
-    // Use local Date constructor (not UTC) to avoid timezone-induced date shifts
+    // isCr controls whether the modal shows actions or is read-only
+    // local Date constructor avoids UTC shifting the date by a day
     const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const dayIdx = dayNames.indexOf(day);
     const [y, mo, d] = weekStart.split('-').map(Number);
@@ -1250,33 +1161,6 @@ export default function Timetable({ user }) {
       loadData();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to remove override');
-    }
-  };
-
-  const handlePushDay = async (day, date) => {
-    try {
-      const res = await timetableAPI.pushDay(semesterId, date);
-      setSuccess(res.data.message || 'Day pushed to GCal');
-    } catch (err) {
-      if (err.response?.data?.not_connected) {
-        setError('Connect Google Calendar first from the /calendar page.');
-      } else {
-        setError(err.response?.data?.error || 'Failed to push day to GCal');
-      }
-    }
-  };
-
-  const handleDeleteDay = async (day, date) => {
-    if (!window.confirm(`Remove all GCal events for ${date}?`)) return;
-    try {
-      await timetableAPI.deleteDay(semesterId, date);
-      setSuccess(`GCal events removed for ${date}`);
-    } catch (err) {
-      if (err.response?.data?.not_connected) {
-        setError('Connect Google Calendar first from the /calendar page.');
-      } else {
-        setError(err.response?.data?.error || 'Failed to remove from GCal');
-      }
     }
   };
 
@@ -1951,76 +1835,6 @@ export default function Timetable({ user }) {
         </div>
       </div>
 
-      {/* GCal action bar — only in week view, full-width row */}
-      {view === 'week' && (
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600, marginRight: '4px' }}>Google Calendar:</span>
-          <button
-            onClick={handlePushThisWeek}
-            disabled={thisWeekLoading || syncGcalLoading || clearGcalLoading}
-            style={{ padding: '5px 14px', background: 'var(--success-color)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
-            title="Push this week's classes as one-time events to Google Calendar"
-          >
-            <Calendar size={12} /> {thisWeekLoading ? 'Pushing…' : 'Push This Week'}
-          </button>
-          <button
-            onClick={handleSyncGcal}
-            disabled={syncGcalLoading || thisWeekLoading || clearGcalLoading}
-            style={{ padding: '5px 14px', background: 'var(--primary-color)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}
-            title="Re-push this week, replacing existing GCal events with current timetable"
-          >
-            <Calendar size={12} /> {syncGcalLoading ? 'Syncing…' : 'Sync This Week'}
-          </button>
-          <button
-            onClick={handleClearGcal}
-            disabled={clearGcalLoading || thisWeekLoading || syncGcalLoading}
-            style={{ padding: '5px 14px', background: 'transparent', color: '#dc2626', border: '1.5px solid #dc2626', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '12px' }}
-            title="Remove all IAPS timetable events from Google Calendar"
-          >
-            {clearGcalLoading ? 'Clearing…' : 'Clear All from GCal'}
-          </button>
-          <button
-            onClick={() => { setShowDayPicker(p => !p); setSelectedPushDays([]); }}
-            disabled={thisWeekLoading || syncGcalLoading || clearGcalLoading}
-            style={{ padding: '5px 14px', background: 'transparent', color: 'var(--primary-color)', border: '1.5px solid var(--primary-color)', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '12px' }}
-            title="Push only selected days to Google Calendar"
-          >
-            Push Selected Days
-          </button>
-        </div>
-      )}
-
-      {/* Day-picker for selected-day push */}
-      {view === 'week' && showDayPicker && (
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', padding: '8px 12px', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
-          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>Select days:</span>
-          {days.map(day => (
-            <label key={day} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', cursor: 'pointer', fontWeight: selectedPushDays.includes(day) ? 700 : 400, color: selectedPushDays.includes(day) ? 'var(--primary-color)' : 'var(--text-primary)' }}>
-              <input
-                type="checkbox"
-                checked={selectedPushDays.includes(day)}
-                onChange={e => setSelectedPushDays(prev => e.target.checked ? [...prev, day] : prev.filter(d => d !== day))}
-                style={{ accentColor: 'var(--primary-color)' }}
-              />
-              {day}
-            </label>
-          ))}
-          <button
-            onClick={() => selectedPushDays.length > 0 && handlePushThisWeek(selectedPushDays)}
-            disabled={selectedPushDays.length === 0 || thisWeekLoading}
-            style={{ padding: '4px 12px', background: selectedPushDays.length > 0 ? 'var(--success-color)' : 'var(--border-color)', color: 'white', border: 'none', borderRadius: '6px', cursor: selectedPushDays.length > 0 ? 'pointer' : 'not-allowed', fontWeight: 600, fontSize: '12px' }}
-          >
-            {thisWeekLoading ? 'Pushing…' : `Push ${selectedPushDays.length > 0 ? selectedPushDays.join(', ') : 'Selected'}`}
-          </button>
-          <button
-            onClick={() => { setShowDayPicker(false); setSelectedPushDays([]); }}
-            style={{ padding: '4px 10px', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}
-          >
-            Cancel
-          </button>
-        </div>
-      )}
-
       {/* Legend */}
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
         {Object.entries(TYPE_COLORS).filter(([k]) => ['Lecture', 'Lab', 'Tutorial', 'Free', 'Lunch'].includes(k)).map(([type, c]) => (
@@ -2077,8 +1891,6 @@ export default function Timetable({ user }) {
           personalSkip={personalSkips.find(ps => ps.day === overrideModal.day && ps.slot === overrideModal.slot && ps.date === overrideModal.selectedDate) || null}
           onAddPersonalSkip={handleAddPersonalSkip}
           onRemovePersonalSkip={handleRemovePersonalSkip}
-          onPushDay={handlePushDay}
-          onDeleteDay={handleDeleteDay}
         />
       )}
 

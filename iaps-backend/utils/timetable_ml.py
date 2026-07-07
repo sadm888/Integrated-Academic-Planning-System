@@ -7,7 +7,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct'
+VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct'  # only free-tier Groq model with vision support
 
 
 def _get_groq_client():
@@ -86,7 +86,7 @@ def extract_timetable_from_image(image_data: bytes, mime_type: str = 'image/jpeg
 
         result_text = response.choices[0].message.content.strip()
 
-        # Strip markdown code blocks if model wraps in them
+        # model ignores the "no markdown" instruction often enough that we still guard for it
         if result_text.startswith('```'):
             parts = result_text.split('```')
             if len(parts) >= 3:
@@ -97,12 +97,11 @@ def extract_timetable_from_image(image_data: bytes, mime_type: str = 'image/jpeg
 
         data = json.loads(result_text)
 
-        # Validate required top-level keys
         for key in ('days', 'time_slots', 'grid'):
             if key not in data:
                 raise ValueError(f"Missing required field: '{key}' in extracted timetable")
 
-        # Ensure each day in grid has all time slots
+        # Backfill missing cells as "Free" — model sometimes skips empty slots entirely
         for day in data['days']:
             if day not in data['grid']:
                 data['grid'][day] = {}

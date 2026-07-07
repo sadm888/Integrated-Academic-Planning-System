@@ -535,16 +535,15 @@ function Chat({ user }) {
   const [fullscreenPhoto, setFullscreenPhoto] = useState(null);
   const [removePhotoReason, setRemovePhotoReason] = useState('');
   const [removePhotoLoading, setRemovePhotoLoading] = useState(false);
-  // New state
   const [pinnedMessages, setPinnedMessages] = useState([]);   // array, most recent first
   const [currentPinIdx, setCurrentPinIdx]   = useState(0);   // WhatsApp-style cycling index
   const [highlightedMsgId, setHighlightedMsgId] = useState(null); // brief highlight on scroll
-  const [hasMore, setHasMore]             = useState(false);  // #8
-  const [loadingMore, setLoadingMore]     = useState(false);  // #8
-  const [warnModal, setWarnModal]         = useState(null);   // #2 { userId, name, messageId }
-  const [warnReason, setWarnReason]       = useState('');     // #2
+  const [hasMore, setHasMore]             = useState(false);
+  const [loadingMore, setLoadingMore]     = useState(false);
+  const [warnModal, setWarnModal]         = useState(null);   // { userId, name, messageId }
+  const [warnReason, setWarnReason]       = useState('');
   const [warnType, setWarnType]           = useState('chat'); // 'chat' | 'picture'
-  const [showScrollBtn, setShowScrollBtn] = useState(false);  // #3
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [newMsgCount, setNewMsgCount]     = useState(0);
   const [deleteMenu, setDeleteMenu]       = useState(null); // { msgId, x, y }
   const [replyingTo, setReplyingTo]       = useState(null); // { id, text, username, full_name, has_file }

@@ -18,7 +18,14 @@ class Database:
     def connect(self):
         """Establish MongoDB connection"""
         try:
-            self._client = MongoClient(Config.MONGO_URI)
+            # Fail fast (a few seconds) instead of pymongo's 30s default when Mongo is
+            # unreachable/down — without this, every request touching the DB hangs for
+            # ~30s before erroring, which reads as a stuck "loading" spinner on the frontend.
+            self._client = MongoClient(
+                Config.MONGO_URI,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+            )
             # The 'ping' command is cheap and confirms the server is reachable
             self._client.admin.command('ping')
             self._db = self._client.get_database()
@@ -33,11 +40,8 @@ class Database:
     def _create_indexes(self):
         """Create necessary database indexes"""
         try:
-            # Users - unique email
             self._db.users.create_index([("email", ASCENDING)], unique=True)
-            
-            # Users - case-insensitive username
-            # We use a specific name 'username_ci' to avoid conflicts with auto-generated names
+
             try:
                 self._db.users.create_index(
                     [("username", ASCENDING)], 
@@ -46,14 +50,9 @@ class Database:
                     name="username_case_insensitive"
                 )
             except Exception as e:
-                # If it still fails, it's likely because the OLD 'username_1' index exists
-                # You might want to manually drop it once: self._db.users.drop_index("username_1")
+                # Usually means the old non-collated 'username_1' index is still around;
+                # drop it manually once with self._db.users.drop_index("username_1") if so
                 logger.warning(f"Could not create username index (may already exist): {e}")
-
-            # google_tokens — one doc per user
-            self._db.google_tokens.create_index(
-                [("user_id", ASCENDING)], unique=True, name="google_tokens_user_id"
-            )
 
             # schedule_requests — list by classroom, newest first
             self._db.schedule_requests.create_index(
@@ -74,34 +73,6 @@ class Database:
                 name="chat_read_status_user_classroom"
             )
 
-            # attendance_sessions — list by semester + date, dedup by date+slot
-            self._db.attendance_sessions.create_index(
-                [("semester_id", ASCENDING), ("date", ASCENDING), ("slot", ASCENDING)],
-                name="attendance_sessions_semester_date_slot"
-            )
-            self._db.attendance_sessions.create_index(
-                [("semester_id", ASCENDING), ("subject", ASCENDING), ("status", ASCENDING)],
-                name="attendance_sessions_semester_subject_status"
-            )
-
-            # attendance_records — one per student per session
-            self._db.attendance_records.create_index(
-                [("session_id", ASCENDING), ("student_id", ASCENDING)],
-                unique=True,
-                name="attendance_records_session_student"
-            )
-            self._db.attendance_records.create_index(
-                [("semester_id", ASCENDING), ("student_id", ASCENDING)],
-                name="attendance_records_semester_student"
-            )
-
-            # attendance_settings — one per semester
-            self._db.attendance_settings.create_index(
-                [("semester_id", ASCENDING)],
-                unique=True,
-                name="attendance_settings_semester"
-            )
-
             # email_verifications — look up by token; auto-expire via TTL on expires_at
             self._db.email_verifications.create_index(
                 [("token", ASCENDING)], unique=True, name="email_verifications_token"
@@ -110,16 +81,6 @@ class Database:
                 [("expires_at", ASCENDING)],
                 expireAfterSeconds=0,
                 name="email_verifications_ttl"
-            )
-
-            # invitations — look up by token; auto-expire via TTL on expires_at
-            self._db.invitations.create_index(
-                [("token", ASCENDING)], unique=True, name="invitations_token"
-            )
-            self._db.invitations.create_index(
-                [("expires_at", ASCENDING)],
-                expireAfterSeconds=0,
-                name="invitations_ttl"
             )
 
             logger.info("Database indexes checked/created successfully")
@@ -138,7 +99,6 @@ class Database:
             self._client.close()
             logger.info("MongoDB connection closed")
 
-# Initialize the singleton instance
 db = Database()
 
 def get_db():

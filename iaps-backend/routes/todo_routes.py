@@ -52,7 +52,6 @@ def create_todo():
 
         result = db.todos.insert_one(todo)
 
-        # Fetch creator info for the response
         creator = db.users.find_one({'_id': ObjectId(user_id)})
 
         return jsonify({

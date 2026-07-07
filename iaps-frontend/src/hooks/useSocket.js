@@ -56,6 +56,7 @@ export function useSocket(semesterId, handlers = {}) {
     socket.on('list_updated',         (data) => handlersRef.current.onListUpdated?.(data));
 
     return () => {
+      // tear down and reconnect fresh whenever we switch rooms
       socket.disconnect();
       socketRef.current = null;
     };

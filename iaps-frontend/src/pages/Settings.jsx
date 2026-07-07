@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { settingsAPI, calendarAPI, authAPI, BACKEND_URL } from '../services/api';
+import { settingsAPI, BACKEND_URL } from '../services/api';
 import { formatDate } from '../utils/timeUtils';
 import { useTheme } from '../contexts/ThemeContext';
 import Avatar from '../components/Avatar';
 import { FileTypeIcon, sizeLabel } from '../utils/fileUtils';
-import { AlertTriangle, Pencil, Eye, Trash2, Calendar, CheckCircle } from 'lucide-react';
+import { AlertTriangle, Pencil, Eye, Trash2 } from 'lucide-react';
 
-const SECTIONS = ['Profile', 'Security', 'Login Activity', 'Appearance', 'Privacy', 'Personal Documents', 'Connected Services', 'Invite a Friend'];
+const SECTIONS = ['Profile', 'Security', 'Login Activity', 'Appearance', 'Privacy', 'Personal Documents'];
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -708,119 +708,6 @@ function PrivacySection({ user, onProfileUpdate }) {
   );
 }
 
-function ConnectedServicesSection() {
-  const [calStatus, setCalStatus] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [showConsent, setShowConsent] = useState(false);
-  const [disconnecting, setDisconnecting] = useState(false);
-  const [justConnected, setJustConnected] = useState(false);
-
-  useEffect(() => {
-    // Check if we just returned from Google OAuth
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('connected') === 'true') {
-      setJustConnected(true);
-      // Clean the URL
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-    calendarAPI.getStatus()
-      .then((res) => setCalStatus(res.data))
-      .catch(() => setCalStatus(null))
-      .finally(() => setLoading(false));
-  }, []);
-
-  const handleConnect = async () => {
-    try {
-      const res = await calendarAPI.getAuthUrl();
-      window.location.href = res.data.auth_url;
-    } catch {
-      alert('Failed to get Google Calendar auth URL.');
-    }
-  };
-
-  const handleDisconnect = async () => {
-    if (!window.confirm('Disconnect Google Calendar?')) return;
-    setDisconnecting(true);
-    try {
-      await calendarAPI.disconnect();
-      setCalStatus({ connected: false });
-    } catch {
-      alert('Failed to disconnect.');
-    } finally {
-      setDisconnecting(false);
-    }
-  };
-
-  const isConnected = calStatus?.connected;
-
-  return (
-    <div>
-      <h2 style={headingStyle}>Connected Services</h2>
-      {justConnected && (
-        <div style={{ background: 'var(--success-bg)', border: '1px solid var(--success-border)', color: 'var(--success-text)', borderRadius: '8px', padding: '10px 14px', fontSize: '13px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <CheckCircle size={14} /> Google Calendar connected successfully.
-        </div>
-      )}
-      <div style={cardStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <div style={{
-            width: '44px', height: '44px', borderRadius: '10px',
-            background: 'rgba(102,126,234,0.1)', display: 'flex', alignItems: 'center',
-            justifyContent: 'center', fontSize: '24px', flexShrink: 0,
-          }}>
-            <Calendar size={24} strokeWidth={1.75} style={{ color: '#667eea' }} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Google Calendar</div>
-            <div style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-              {loading ? 'Checking status…' : isConnected ? (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                  <CheckCircle size={13} strokeWidth={1.75} color="#22c55e" />
-                  Connected{calStatus?.google_email ? ` as ${calStatus.google_email}` : ''}
-                </span>
-              ) : 'Not connected'}
-            </div>
-          </div>
-          {!loading && (
-            isConnected ? (
-              <button onClick={handleDisconnect} disabled={disconnecting} style={ghostBtnStyle}>
-                {disconnecting ? 'Disconnecting…' : 'Disconnect'}
-              </button>
-            ) : (
-              <button onClick={() => setShowConsent(true)} style={primaryBtnStyle}>
-                Connect
-              </button>
-            )
-          )}
-        </div>
-      </div>
-
-      {/* Consent modal */}
-      {showConsent && (
-        <div style={modalOverlayStyle} onClick={() => setShowConsent(false)}>
-          <div style={modalContentStyle} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ marginBottom: '16px', color: 'var(--text-primary)' }}>Connect Google Calendar</h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '16px' }}>
-              Connecting Google Calendar will allow IAPS to:
-            </p>
-            <ul style={{ paddingLeft: '20px', color: 'var(--text-secondary)', fontSize: '14px', lineHeight: '2', marginBottom: '24px' }}>
-              <li>View your calendar events</li>
-              <li>Create and edit events on your behalf</li>
-              <li>Access is only used for schedule sync features</li>
-            </ul>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button onClick={() => setShowConsent(false)} style={ghostBtnStyle}>Cancel</button>
-              <button onClick={() => { setShowConsent(false); handleConnect(); }} style={primaryBtnStyle}>
-                Allow &amp; Connect →
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── Login Activity section ───────────────────────────────────────────────────
 
 function LoginActivitySection() {
@@ -1044,82 +931,7 @@ function Settings({ user, onLogout, onProfileUpdate }) {
         {activeSection === 'Appearance' && <AppearanceSection />}
         {activeSection === 'Privacy' && <PrivacySection user={localUser} onProfileUpdate={handleProfileUpdate} />}
         {activeSection === 'Personal Documents' && <PersonalDocumentsSection />}
-        {activeSection === 'Connected Services' && <ConnectedServicesSection />}
-        {activeSection === 'Invite a Friend' && <InviteFriendSection />}
       </main>
-    </div>
-  );
-}
-
-function InviteFriendSection() {
-  const [email, setEmail] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState('');
-
-  const handleSend = async (e) => {
-    e.preventDefault();
-    if (!email.trim()) { setErr('Please enter an email address.'); return; }
-    setLoading(true);
-    setMsg('');
-    setErr('');
-    try {
-      const res = await authAPI.sendInvite(email.trim().toLowerCase());
-      setMsg(res.data.message || 'Invitation sent!');
-      setEmail('');
-    } catch (ex) {
-      setErr(ex.response?.data?.error || 'Failed to send invitation. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div>
-      <h2 style={headingStyle}>Invite a Friend</h2>
-      <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px' }}>
-        Know someone who'd benefit from IAPS? Enter their email and we'll send them a
-        personalised invitation link to sign up.
-      </p>
-
-      <form onSubmit={handleSend} style={{ maxWidth: 420 }}>
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ display: 'block', fontWeight: 600, fontSize: 14, marginBottom: 6 }}>
-            Email address
-          </label>
-          <input
-            type="email"
-            value={email}
-            onChange={e => { setEmail(e.target.value); setErr(''); setMsg(''); }}
-            placeholder="friend@example.com"
-            style={{
-              width: '100%', padding: '10px 14px', borderRadius: 8, fontSize: 14,
-              border: '1.5px solid var(--border-color)', background: 'var(--input-bg, var(--bg-color))',
-              color: 'var(--text-primary)', boxSizing: 'border-box',
-            }}
-          />
-        </div>
-
-        {err && (
-          <p style={{ color: '#dc2626', fontSize: 13, marginBottom: 10 }}>{err}</p>
-        )}
-        {msg && (
-          <p style={{ color: '#16a34a', fontSize: 13, marginBottom: 10 }}>{msg}</p>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading}
-          style={{
-            padding: '10px 28px', borderRadius: 8, border: 'none',
-            background: '#667eea', color: '#fff', fontWeight: 600,
-            fontSize: 14, cursor: loading ? 'not-allowed' : 'pointer',
-            opacity: loading ? 0.7 : 1,
-          }}
-        >
-          {loading ? 'Sending…' : 'Send Invitation'}
-        </button>
-      </form>
     </div>
   );
 }

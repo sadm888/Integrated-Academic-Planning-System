@@ -6,16 +6,15 @@ import Signup from './pages/Signup';
 import Classrooms from './pages/Classrooms';
 import ClassroomDetail from './pages/ClassroomDetail';
 import SemesterDetail from './pages/SemesterDetail';
-import Calendar from './pages/Calendar';
 import Chat from './pages/Chat';
 import Settings from './pages/Settings';
 import Academics from './pages/Academics';
 import Files from './pages/Files';
 import Timetable from './pages/Timetable';
 import AcademicCalendar from './pages/AcademicCalendar';
+import Calendar from './pages/Calendar';
 import Marks from './pages/Marks';
 import MarksDetail from './pages/MarksDetail';
-import Attendance from './pages/Attendance';
 import MarksAnalytics from './pages/MarksAnalytics';
 import StudyTools from './pages/StudyTools';
 import Navbar from './components/Navbar';
@@ -420,16 +419,6 @@ function App() {
           }
         />
         <Route
-          path="/calendar"
-          element={
-            user ? (
-              <Calendar user={user} />
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
-        <Route
           path="/classroom/:classroomId/semester/:semesterId"
           element={
             user ? (
@@ -490,16 +479,6 @@ function App() {
           }
         />
         <Route
-          path="/classroom/:classroomId/semester/:semesterId/attendance"
-          element={
-            user ? (
-              <Attendance user={user} />
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
-        <Route
           path="/classroom/:classroomId/semester/:semesterId/academic-calendar"
           element={
             user ? (
@@ -510,20 +489,20 @@ function App() {
           }
         />
         <Route
-          path="/classroom/:classroomId/semester/:semesterId/calendar"
+          path="/classroom/:classroomId/semester/:semesterId/chat"
           element={
             user ? (
-              <Calendar user={user} />
+              <Chat user={user} />
             ) : (
               <Navigate to="/login" replace />
             )
           }
         />
         <Route
-          path="/classroom/:classroomId/semester/:semesterId/chat"
+          path="/calendar"
           element={
             user ? (
-              <Chat user={user} />
+              <Calendar user={user} />
             ) : (
               <Navigate to="/login" replace />
             )

@@ -1,21 +1,3 @@
-"""dm_routes.py — Private direct messaging between classroom members and CRs.
-
-REST:
-  POST   /<classroom_id>/send                         — send text DM
-  POST   /<classroom_id>/upload/<to_user_id>          — upload file DM
-  GET    /<classroom_id>/thread/<with_user_id>        — message history
-  POST   /<classroom_id>/thread/<with_user_id>/read   — mark thread as read
-  GET    /unread-count                                — total unread DMs for current user
-  DELETE /<classroom_id>/messages/<message_id>        — delete a DM message
-  GET    /file/<message_id>                           — serve DM file
-  GET    /<classroom_id>/member-stats                 — CR: per-member DM send counts
-
-Socket:
-  join_dm → join a two-user DM room
-  dm_message (emit) → new DM delivered to recipient
-  dm_message_deleted (emit) → DM deleted
-"""
-
 import os
 import logging
 from datetime import datetime, timezone
@@ -39,8 +21,6 @@ os.makedirs(DM_UPLOAD_DIR, exist_ok=True)
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
-
-# ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _dm_room(classroom_id, user_a, user_b):
     """Deterministic room name for a two-user DM thread in a classroom."""
@@ -90,8 +70,6 @@ def _serialize_dm(msg):
     return result
 
 
-# ─── Socket.IO: join DM room ──────────────────────────────────────────────────
-
 @socketio.on('join_dm')
 def handle_join_dm(data):
     """Verify both parties are classroom members, then subscribe socket to DM room."""
@@ -119,8 +97,6 @@ def handle_join_dm(data):
     join_room(room)
 
 
-# ─── Socket.IO: DM typing ─────────────────────────────────────────────────────
-
 @socketio.on('dm_typing')
 def handle_dm_typing(data):
     """Broadcast a typing notification to the other participant in a DM thread."""
@@ -139,8 +115,6 @@ def handle_dm_typing(data):
         'name': user_data.get('full_name') or user_data.get('username', ''),
     }, to=room, skip_sid=request.sid)
 
-
-# ─── REST: send text DM ───────────────────────────────────────────────────────
 
 @dm_bp.route('/<classroom_id>/send', methods=['POST'])
 @token_required
@@ -215,8 +189,6 @@ def send_dm(classroom_id):
         return jsonify({'error': 'Failed to send message'}), 500
 
 
-# ─── REST: upload file DM ─────────────────────────────────────────────────────
-
 @dm_bp.route('/<classroom_id>/upload/<to_user_id>', methods=['POST'])
 @token_required
 def upload_dm_file(classroom_id, to_user_id):
@@ -288,8 +260,6 @@ def upload_dm_file(classroom_id, to_user_id):
         return jsonify({'error': 'Failed to upload file'}), 500
 
 
-# ─── REST: thread history ─────────────────────────────────────────────────────
-
 @dm_bp.route('/<classroom_id>/thread/<with_user_id>', methods=['GET'])
 @token_required
 def get_dm_thread(classroom_id, with_user_id):
@@ -327,8 +297,6 @@ def get_dm_thread(classroom_id, with_user_id):
         return jsonify({'error': 'Failed to fetch messages'}), 500
 
 
-# ─── REST: mark thread as read ────────────────────────────────────────────────
-
 @dm_bp.route('/<classroom_id>/thread/<with_user_id>/read', methods=['POST'])
 @token_required
 def mark_dm_read(classroom_id, with_user_id):
@@ -349,8 +317,6 @@ def mark_dm_read(classroom_id, with_user_id):
         return jsonify({'error': 'Failed to mark as read'}), 500
 
 
-# ─── REST: total unread count ─────────────────────────────────────────────────
-
 @dm_bp.route('/unread-count', methods=['GET'])
 @token_required
 def get_dm_unread_count():
@@ -367,8 +333,6 @@ def get_dm_unread_count():
         logger.error(f"get_dm_unread_count error: {e}")
         return jsonify({'error': 'Failed to get count'}), 500
 
-
-# ─── REST: unread count per classroom ─────────────────────────────────────────
 
 @dm_bp.route('/unread-by-classroom', methods=['GET'])
 @token_required
@@ -388,8 +352,6 @@ def get_dm_unread_by_classroom():
         logger.error(f"get_dm_unread_by_classroom error: {e}")
         return jsonify({'error': 'Failed to get counts'}), 500
 
-
-# ─── REST: delete message ─────────────────────────────────────────────────────
 
 @dm_bp.route('/<classroom_id>/messages/<message_id>', methods=['DELETE'])
 @token_required
@@ -437,8 +399,6 @@ def delete_dm_message(classroom_id, message_id):
         return jsonify({'error': 'Failed to delete'}), 500
 
 
-# ─── REST: file serving ───────────────────────────────────────────────────────
-
 @dm_bp.route('/file/<message_id>', methods=['GET'])
 def serve_dm_file(message_id):
     from database import get_db
@@ -482,8 +442,6 @@ def serve_dm_file(message_id):
         return jsonify({'error': 'Failed to serve file'}), 500
 
 
-# ─── REST: unread count per sender in a classroom ────────────────────────────
-
 @dm_bp.route('/<classroom_id>/unread-by-sender', methods=['GET'])
 @token_required
 def get_unread_by_sender(classroom_id):
@@ -504,8 +462,6 @@ def get_unread_by_sender(classroom_id):
         logger.error(f"get_unread_by_sender error: {e}")
         return jsonify({'error': 'Failed to get unread counts'}), 500
 
-
-# ─── REST: member DM stats (CR only) ─────────────────────────────────────────
 
 @dm_bp.route('/<classroom_id>/member-stats', methods=['GET'])
 @token_required
@@ -532,8 +488,6 @@ def get_member_dm_stats(classroom_id):
         logger.error(f"get_member_dm_stats error: {e}")
         return jsonify({'error': 'Failed to get stats'}), 500
 
-
-# ─── REST: DM reactions ───────────────────────────────────────────────────────
 
 @dm_bp.route('/<classroom_id>/messages/<message_id>/react', methods=['POST'])
 @token_required
@@ -566,8 +520,6 @@ def react_to_dm(classroom_id, message_id):
         logger.error(f"react_to_dm error: {e}")
         return jsonify({'error': 'Failed to react'}), 500
 
-
-# ─── REST: DM pin toggle ───────────────────────────────────────────────────────
 
 @dm_bp.route('/<classroom_id>/messages/<message_id>/pin', methods=['POST'])
 @token_required

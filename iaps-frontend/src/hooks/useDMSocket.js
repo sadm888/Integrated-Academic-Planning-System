@@ -14,6 +14,9 @@ export function useDMSocket(classroomId, withUserId, handlers = {}) {
   const socketRef = useRef(null);
   const [connected, setConnected] = useState(false);
 
+  // handlers gets a new object identity every render, so we stash the latest
+  // version in a ref instead of listing it as a dependency below — otherwise
+  // the socket would reconnect on every render.
   const handlersRef = useRef(handlers);
   useEffect(() => { handlersRef.current = handlers; });
 
@@ -43,6 +46,7 @@ export function useDMSocket(classroomId, withUserId, handlers = {}) {
     socket.on('dm_pin_updated',        (data) => handlersRef.current.onPinUpdated?.(data));
 
     return () => {
+      // tear down and reconnect fresh whenever we switch threads
       socket.disconnect();
       socketRef.current = null;
     };

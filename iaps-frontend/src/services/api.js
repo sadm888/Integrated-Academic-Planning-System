@@ -16,7 +16,6 @@ const api = axios.create({
   },
 });
 
-// Request interceptor - attach Bearer token from localStorage
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
@@ -30,7 +29,6 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -51,8 +49,6 @@ export const authAPI = {
   signup: (data) => api.post('/auth/signup', data),
   login: (data) => api.post('/auth/login', data),
   verify: () => api.get('/auth/verify'),
-  sendInvite: (email) => api.post('/auth/send-invite', { email }),
-  checkInvite: (token) => api.get(`/auth/check-invite/${token}`),
 };
 
 // Classroom endpoints
@@ -134,18 +130,6 @@ export const marksAPI = {
   getTrend: (classroomId) => api.get(`/marks/trend/${classroomId}`),
   getSemesterAnalytics: (semesterId) => api.get(`/marks/semester-analytics/${semesterId}`),
   getCrClassAverage: (semesterId) => api.get(`/marks/cr-class-average/${semesterId}`),
-};
-
-// Google Calendar endpoints
-export const calendarAPI = {
-  getAuthUrl: () => api.get('/calendar/auth-url'),
-  getStatus: () => api.get('/calendar/status'),
-  disconnect: () => api.delete('/calendar/disconnect'),
-  listEvents: (timeMin, timeMax) =>
-    api.get('/calendar/events', { params: { time_min: timeMin, time_max: timeMax } }),
-  createEvent: (data) => api.post('/calendar/events', data),
-  updateEvent: (eventId, data) => api.patch(`/calendar/events/${eventId}`, data),
-  deleteEvent: (eventId) => api.delete(`/calendar/events/${eventId}`),
 };
 
 // Chat endpoints
@@ -235,14 +219,6 @@ export const announcementAPI = {
   delete: (announcementId) => api.delete(`/announcement/${announcementId}`),
 };
 
-// Schedule request endpoints
-export const scheduleAPI = {
-  create: (data) => api.post('/schedule/create', data),
-  listForClassroom: (classroomId) => api.get(`/schedule/classroom/${classroomId}`),
-  deleteRequest: (requestId) => api.delete(`/schedule/request/${requestId}`),
-  pullRequest: (requestId) => api.post(`/schedule/request/${requestId}/pull`),
-  pullAll: (classroomId) => api.post(`/schedule/classroom/${classroomId}/pull-all`),
-};
 
 // Academic endpoints
 export const academicAPI = {
@@ -345,14 +321,6 @@ export const timetableAPI = {
   deleteOverride: (semesterId, overrideId) =>
     api.delete(`/timetable/semester/${semesterId}/override/${overrideId}`),
   listOverrides: (semesterId) => api.get(`/timetable/semester/${semesterId}/overrides`),
-  pushToCalendar: (semesterId, data) =>
-    api.post(`/timetable/semester/${semesterId}/push-to-calendar`, data),
-  syncCalendar: (semesterId) =>
-    api.post(`/timetable/semester/${semesterId}/sync-calendar`),
-  clearTimetableFromCalendar: (semesterId) =>
-    api.delete(`/timetable/semester/${semesterId}/push-to-calendar`),
-  pushThisWeek: (semesterId, date, days = null) =>
-    api.post(`/timetable/semester/${semesterId}/push-this-week`, { date, ...(days && { days }) }),
 
   // Academic calendar
   extractAcademicCalendar: (semesterId, formData) =>
@@ -363,17 +331,6 @@ export const timetableAPI = {
     api.post(`/timetable/semester/${semesterId}/academic-calendar`, data),
   getAcademicCalendar: (semesterId) =>
     api.get(`/timetable/semester/${semesterId}/academic-calendar`),
-  pushAcademicCalendar: (semesterId) =>
-    api.post(`/timetable/semester/${semesterId}/academic-calendar/push-to-calendar`),
-  clearAcademicCalendarFromGcal: (semesterId) =>
-    api.delete(`/timetable/semester/${semesterId}/academic-calendar/push-to-calendar`),
-
-  // Single-day GCal push/delete (used from override modal)
-  // pushDay always deletes existing events for that date before recreating — safe to call as "update" too
-  pushDay: (semesterId, date) =>
-    api.post(`/timetable/semester/${semesterId}/push-day`, { date }),
-  deleteDay: (semesterId, date) =>
-    api.delete(`/timetable/semester/${semesterId}/push-day`, { data: { date } }),
 
   // Personal skips (per-user, any member)
   addPersonalSkip: (semesterId, data) =>
@@ -382,55 +339,6 @@ export const timetableAPI = {
     api.delete(`/timetable/semester/${semesterId}/personal-skip/${skipId}`),
 };
 
-export const attendanceAPI = {
-  getSettings: (semesterId) =>
-    api.get(`/attendance/semester/${semesterId}/settings`),
-  updateSettings: (semesterId, data) =>
-    api.patch(`/attendance/semester/${semesterId}/settings`, data),
-  getSubjectConfigs: (semesterId) =>
-    api.get(`/attendance/semester/${semesterId}/subject-configs`),
-  updateSubjectConfig: (semesterId, subject, data) =>
-    api.patch(`/attendance/semester/${semesterId}/subject/${encodeURIComponent(subject)}/config`, data),
-  getSummary: (semesterId) =>
-    api.get(`/attendance/semester/${semesterId}/summary`),
-  getSessions: (semesterId, date) =>
-    api.get(`/attendance/semester/${semesterId}/sessions`, { params: date ? { date } : {} }),
-  markSession: (semesterId, sessionId, status) =>
-    api.patch(`/attendance/semester/${semesterId}/sessions/${sessionId}`, { status }),
-  markSelf: (semesterId, sessionId, status) =>
-    api.post(`/attendance/semester/${semesterId}/mark`, { session_id: sessionId, status }),
-  changeMark: (semesterId, sessionId, status) =>
-    api.put(`/attendance/semester/${semesterId}/mark/${sessionId}`, { status }),
-  getHistory: (semesterId, subject) =>
-    api.get(`/attendance/semester/${semesterId}/history/${encodeURIComponent(subject)}`),
-  getCrRoll: (semesterId, sessionId) =>
-    api.get(`/attendance/semester/${semesterId}/cr-roll/${sessionId}`),
-  getCrSubjectSummary: (semesterId, subject) =>
-    api.get(`/attendance/semester/${semesterId}/subject/${encodeURIComponent(subject)}/cr-summary`),
-  crMarkStudent: (semesterId, sessionId, studentId, status) =>
-    api.post(`/attendance/semester/${semesterId}/cr-roll/${sessionId}/${studentId}`, { status }),
-  generate: (semesterId) =>
-    api.post(`/attendance/semester/${semesterId}/generate`),
-  getDefaulters: (semesterId, params = {}) =>
-    api.get(`/attendance/semester/${semesterId}/defaulters`, { params }),
-  exportSubjectExcel: (semesterId, subject) =>
-    fileUrl(`attendance/semester/${semesterId}/subject/${encodeURIComponent(subject)}/export/excel`),
-  exportAllExcel: (semesterId) =>
-    fileUrl(`attendance/semester/${semesterId}/export/excel`),
-  exportDefaultersExcel: (semesterId) =>
-    fileUrl(`attendance/semester/${semesterId}/defaulters/export/excel`),
-  uploadAttachment: (semesterId, sessionId, file) => {
-    const form = new FormData();
-    form.append('file', file);
-    return api.post(`/attendance/semester/${semesterId}/record/${sessionId}/attachment`, form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
-  deleteAttachment: (semesterId, sessionId) =>
-    api.delete(`/attendance/semester/${semesterId}/record/${sessionId}/attachment`),
-  proofUrl: (storedName) => fileUrl(`attendance/proof/${storedName}`),
-  getMyProofs: () => api.get('/attendance/my-proofs'),
-};
 
 // AI Study Tools endpoints  (all per-document — no subject/semester dependency)
 export const aiAPI = {

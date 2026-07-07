@@ -1,13 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import React, { useState, useRef } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { authAPI } from '../services/api';
 import '../styles/Auth.css';
 import { Eye } from 'lucide-react';
 
 const Signup = ({ onAuthSuccess }) => {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const inviteToken = searchParams.get('invite') || '';
 
   const [formData, setFormData] = useState({
     email: '',
@@ -21,7 +19,6 @@ const Signup = ({ onAuthSuccess }) => {
   });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [inviteInfo, setInviteInfo] = useState(null);
   const pwRef = useRef(null);
   const confirmPwRef = useRef(null);
 
@@ -32,21 +29,6 @@ const Signup = ({ onAuthSuccess }) => {
     color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 600,
     padding: '3px 8px', lineHeight: 1.3, userSelect: 'none',
   };
-
-  // Validate invite token on mount if present
-  useEffect(() => {
-    if (!inviteToken) return;
-    authAPI.checkInvite(inviteToken)
-      .then((res) => {
-        if (res.data.valid) {
-          setInviteInfo({ inviter_name: res.data.inviter_name, invited_email: res.data.invited_email });
-          if (res.data.invited_email) {
-            setFormData(f => ({ ...f, email: res.data.invited_email }));
-          }
-        }
-      })
-      .catch(() => {});
-  }, [inviteToken]);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -72,7 +54,6 @@ const Signup = ({ onAuthSuccess }) => {
     setIsLoading(true);
     try {
       const { confirmPassword, ...signupData } = formData;
-      if (inviteToken) signupData.invite_token = inviteToken;
       const response = await authAPI.signup(signupData);
       onAuthSuccess(response.data.user, response.data.token);
       navigate('/classrooms');
@@ -88,15 +69,6 @@ const Signup = ({ onAuthSuccess }) => {
       <div className="auth-card signup-card">
         <h1>Join IAPS</h1>
         <h2>Create Your Account</h2>
-
-        {inviteInfo && (
-          <div style={{
-            background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8,
-            padding: '10px 14px', marginBottom: 16, fontSize: 14, color: '#166534',
-          }}>
-            You were invited by <strong>{inviteInfo.inviter_name}</strong>
-          </div>
-        )}
 
         {error && <div className="error-message">{error}</div>}
 

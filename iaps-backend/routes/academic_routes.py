@@ -163,7 +163,6 @@ def all_resources():
         if not semester_ids:
             return jsonify({'resources': []}), 200
 
-        # Subject names
         subjects = list(db.subjects.find(
             {'semester_id': {'$in': semester_ids}},
             {'_id': 1, 'name': 1, 'semester_id': 1},

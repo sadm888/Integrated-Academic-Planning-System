@@ -150,7 +150,6 @@ def request_join():
             if req.get('user_id') == user_oid:
                 return jsonify({'error': 'You have already requested to join'}), 400
 
-        # Add join request
         join_request = {
             'user_id': user_oid,
             'requested_at': datetime.now(timezone.utc)
@@ -311,10 +310,8 @@ def get_classroom(classroom_id):
         if not is_member_of_classroom(classroom, user_oid):
             return jsonify({'error': 'Access denied'}), 403
 
-        # Get member info
         members = list(db.users.find({'_id': {'$in': classroom.get('members', [])}}))
 
-        # Get pending join requests with user info
         join_requests = []
         for req in classroom.get('join_requests', []):
             req_user = db.users.find_one({'_id': req['user_id']})
@@ -327,7 +324,6 @@ def get_classroom(classroom_id):
                     'requested_at': req['requested_at'].isoformat()
                 })
 
-        # Get semesters for this classroom
         semesters = list(db.semesters.find(
             {'classroom_id': str(classroom['_id'])}
         ).sort('created_at', -1))
@@ -337,7 +333,6 @@ def get_classroom(classroom_id):
             cr_ids = [str(c) for c in sem.get('cr_ids', [])]
             sem_id = str(sem['_id'])
 
-            # Fetch subjects for this semester
             subjects = list(db.subjects.find({'semester_id': sem_id}).sort('name', 1))
             formatted_subjects = [{
                 'id': str(s['_id']),
@@ -456,7 +451,6 @@ def leave_classroom(classroom_id):
         # Get semester IDs for nomination cleanup
         sem_ids = [str(s['_id']) for s in db.semesters.find({'classroom_id': classroom_id}, {'_id': 1})]
 
-        # Remove from members list
         db.classrooms.update_one(
             {'_id': classroom['_id']},
             {
@@ -465,7 +459,7 @@ def leave_classroom(classroom_id):
             }
         )
 
-        # Remove from CR lists in every semester of this classroom
+        # Also drop any CR role they held in this classroom's semesters
         db.semesters.update_many(
             {'classroom_id': classroom_id},
             {'$pull': {'cr_ids': user_id}}
@@ -645,7 +639,6 @@ def remove_member(classroom_id):
         if not is_member_of_classroom(classroom, target_oid):
             return jsonify({'error': 'User is not a member'}), 400
 
-        # Remove from members
         db.classrooms.update_one(
             {'_id': classroom['_id']},
             {
@@ -654,7 +647,7 @@ def remove_member(classroom_id):
             }
         )
 
-        # Also remove from any CR lists in this classroom's semesters
+        # Also drop them from any CR lists in this classroom's semesters
         db.semesters.update_many(
             {'classroom_id': classroom_id},
             {'$pull': {'cr_ids': target_user_id}}
@@ -962,7 +955,6 @@ def delete_classroom(classroom_id):
             db.cr_nominations.delete_many({'semester_id': {'$in': semester_ids}})
             db.semester_sessions.delete_many({'semester_id': {'$in': semester_ids}})
 
-        # Delete subjects
         db.subjects.delete_many({'classroom_id': classroom_id})
 
         # Delete documents + files from disk

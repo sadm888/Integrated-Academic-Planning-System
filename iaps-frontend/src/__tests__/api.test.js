@@ -145,21 +145,11 @@ describe('API service', () => {
     expect(typeof timetableAPI.addOverride).toBe('function');
     expect(typeof timetableAPI.deleteOverride).toBe('function');
     expect(typeof timetableAPI.listOverrides).toBe('function');
-    expect(typeof timetableAPI.pushToCalendar).toBe('function');
-    expect(typeof timetableAPI.syncCalendar).toBe('function');
-    expect(typeof timetableAPI.clearTimetableFromCalendar).toBe('function');
-    expect(typeof timetableAPI.pushThisWeek).toBe('function');
-    expect(typeof timetableAPI.pushDay).toBe('function');
-    expect(typeof timetableAPI.deleteDay).toBe('function');
     expect(typeof timetableAPI.addPersonalSkip).toBe('function');
     expect(typeof timetableAPI.deletePersonalSkip).toBe('function');
     expect(typeof timetableAPI.extractAcademicCalendar).toBe('function');
     expect(typeof timetableAPI.saveAcademicCalendar).toBe('function');
     expect(typeof timetableAPI.getAcademicCalendar).toBe('function');
-    expect(typeof timetableAPI.pushAcademicCalendar).toBe('function');
-    expect(typeof timetableAPI.clearAcademicCalendarFromGcal).toBe('function');
-    // updateDay was a dead duplicate of pushDay — must not exist
-    expect(timetableAPI.updateDay).toBeUndefined();
   });
 
   it('exports dmAPI with correct methods', async () => {
@@ -236,54 +226,6 @@ describe('API service', () => {
     expect(typeof linksAPI.list).toBe('function');
     expect(typeof linksAPI.add).toBe('function');
     expect(typeof linksAPI.delete).toBe('function');
-  });
-
-  it('exports attendanceAPI with correct methods', async () => {
-    const { attendanceAPI } = await import('../services/api');
-    expect(typeof attendanceAPI.getSettings).toBe('function');
-    expect(typeof attendanceAPI.updateSettings).toBe('function');
-    expect(typeof attendanceAPI.getSubjectConfigs).toBe('function');
-    expect(typeof attendanceAPI.updateSubjectConfig).toBe('function');
-    expect(typeof attendanceAPI.getSummary).toBe('function');
-    expect(typeof attendanceAPI.getSessions).toBe('function');
-    expect(typeof attendanceAPI.markSession).toBe('function');
-    expect(typeof attendanceAPI.markSelf).toBe('function');
-    expect(typeof attendanceAPI.changeMark).toBe('function');
-    expect(typeof attendanceAPI.getHistory).toBe('function');
-    expect(typeof attendanceAPI.getCrRoll).toBe('function');
-    expect(typeof attendanceAPI.getCrSubjectSummary).toBe('function');
-    expect(typeof attendanceAPI.crMarkStudent).toBe('function');
-    expect(typeof attendanceAPI.generate).toBe('function');
-    expect(typeof attendanceAPI.getDefaulters).toBe('function');
-    expect(typeof attendanceAPI.exportSubjectExcel).toBe('function');
-    expect(typeof attendanceAPI.exportAllExcel).toBe('function');
-    expect(typeof attendanceAPI.uploadAttachment).toBe('function');
-    expect(typeof attendanceAPI.deleteAttachment).toBe('function');
-    expect(typeof attendanceAPI.proofUrl).toBe('function');
-    expect(typeof attendanceAPI.getMyProofs).toBe('function');
-  });
-
-  it('attendanceAPI.getCrSubjectSummary builds correct URL', async () => {
-    const { attendanceAPI } = await import('../services/api');
-    // Calling the function should invoke api.get with the encoded subject path.
-    // We just verify the function exists and accepts (semesterId, subject).
-    expect(attendanceAPI.getCrSubjectSummary.length).toBe(2);
-  });
-
-  it('attendanceAPI.exportSubjectExcel includes semesterId and subject in URL', async () => {
-    localStorage.setItem('token', 'test-token');
-    const { attendanceAPI } = await import('../services/api');
-    const url = attendanceAPI.exportSubjectExcel('sem-1', 'Math');
-    expect(url).toContain('sem-1');
-    expect(url).toContain('Math');
-  });
-
-  it('attendanceAPI.proofUrl includes filename and token', async () => {
-    localStorage.setItem('token', 'test-token');
-    const { attendanceAPI } = await import('../services/api');
-    const url = attendanceAPI.proofUrl('proof-file.jpg');
-    expect(url).toContain('proof-file.jpg');
-    expect(url).toContain('test-token');
   });
 
   it('analyticsFileUrl includes token from localStorage', async () => {

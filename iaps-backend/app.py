@@ -6,7 +6,6 @@ from socketio_instance import socketio
 from limiter_instance import limiter
 import logging
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -16,45 +15,44 @@ logger = logging.getLogger(__name__)
 def create_app():
     """Application factory pattern"""
     import os
-    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'  # allow OAuth over HTTP in local dev
-
     app = Flask(__name__)
-    
-    # Load configuration
+
     app.config.from_object(Config)
-    
-    # Configure CORS
-    # This single block replaces the need for the manual 'after_request' headers
-    CORS(app, 
-         resources={r"/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:5173", "http://127.0.0.1:5173"]}},
+
+    # Vite/CRA dev ports are always allowed; prod frontend comes from env
+    allowed_origins = [
+        "http://localhost:3000", "http://127.0.0.1:3000",
+        "http://localhost:5173", "http://127.0.0.1:5173",
+    ]
+    frontend_url = os.environ.get("FRONTEND_URL", "").strip()
+    if frontend_url and frontend_url not in allowed_origins:
+        allowed_origins.append(frontend_url)
+
+    CORS(app,
+         resources={r"/*": {"origins": allowed_origins}},
          supports_credentials=True,
          allow_headers=['Content-Type', 'Authorization', 'Accept'],
          methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
          expose_headers=['Content-Type', 'Authorization'])
-    
-    # Initialize extensions
+
     limiter.init_app(app)
     from utils.mailer import init_mail
     init_mail(app)
 
-    # Initialize database connection
     try:
         db.connect()
         logger.info("Database connected successfully")
     except Exception as e:
         logger.error(f"Database connection failed: {e}")
-        # We don't raise here to allow the app to potentially 
-        # report its own error via health checks
-    
-    # Register blueprints (Delayed imports to prevent circular dependency)
+        # Don't raise — let the app boot so /api/health can still report the outage
+
+    # Imported here, not at module level, to avoid circular imports with routes -> app
     from routes.auth_routes import auth_bp
     from routes.classroom_routes import classroom_bp
     from routes.semester_routes import semester_bp
     from routes.document_routes import document_bp
     from routes.todo_routes import todo_bp
     from routes.subject_routes import subject_bp
-    from routes.calendar_routes import calendar_bp
-    from routes.schedule_routes import schedule_bp
     from routes.chat_routes import chat_bp  # also registers Socket.IO events
     from routes.settings_routes import settings_bp
     from routes.academic_routes import academic_bp
@@ -62,7 +60,6 @@ def create_app():
     from routes.dm_routes import dm_bp
     from routes.timetable_routes import timetable_bp
     from routes.marks_routes import marks_bp
-    from routes.attendance_routes import attendance_bp
     from routes.ai_routes import ai_bp
 
     app.register_blueprint(auth_bp)
@@ -71,8 +68,6 @@ def create_app():
     app.register_blueprint(document_bp)
     app.register_blueprint(todo_bp)
     app.register_blueprint(subject_bp)
-    app.register_blueprint(calendar_bp)
-    app.register_blueprint(schedule_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(settings_bp)
     app.register_blueprint(academic_bp)
@@ -80,22 +75,24 @@ def create_app():
     app.register_blueprint(dm_bp)
     app.register_blueprint(timetable_bp)
     app.register_blueprint(marks_bp)
-    app.register_blueprint(attendance_bp)
     app.register_blueprint(ai_bp)
 
-    # Ensure avatar upload directory exists
     import os as _os
     _os.makedirs(_os.path.join(_os.getcwd(), 'uploads', 'avatars'), exist_ok=True)
 
-    # Initialise Socket.IO (must come after CORS is configured)
+    # Socket.IO needs the same origin list as CORS, so this has to run after that's built.
+    # eventlet mode matches the Procfile's `-k eventlet` gunicorn worker (which already
+    # monkey-patches the process) — one greenlet-scheduled process can hold many more
+    # concurrent idle sockets than real OS threads.
+    # REDIS_URL (unset by default) enables cross-instance event fan-out via a message
+    # queue; without it, everything still works exactly as today on a single instance.
+    redis_url = os.environ.get('REDIS_URL', '').strip()
     socketio.init_app(
         app,
-        cors_allowed_origins=[
-            'http://localhost:3000', 'http://127.0.0.1:3000',
-            'http://localhost:5173', 'http://127.0.0.1:5173',
-        ],
-        async_mode='threading',
-        max_http_buffer_size=50 * 1024 * 1024,
+        cors_allowed_origins=allowed_origins,
+        async_mode='eventlet',
+        message_queue=redis_url or None,
+        max_http_buffer_size=50 * 1024 * 1024,  # allow largish file/image uploads over the socket
     )
     
     @app.route('/api/health', methods=['GET'])

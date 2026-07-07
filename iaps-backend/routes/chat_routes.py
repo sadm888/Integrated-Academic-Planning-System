@@ -27,6 +27,7 @@ from socketio_instance import socketio
 from utils.encryption import encrypt_text, decrypt_text
 from utils.mime_check import is_dangerous
 from utils import toggle_reaction
+from utils import presence
 
 chat_bp = Blueprint('chat', __name__, url_prefix='/api/chat')
 logger = logging.getLogger(__name__)
@@ -50,29 +51,42 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 _connected_users = {}
 
 
+def _user_room(user_id: str) -> str:
+    """Per-user room every one of a user's sockets joins on connect — lets us target
+    a user without needing to know which instance their socket(s) are connected to."""
+    return f'user_{user_id}'
+
+
 def emit_to_user(user_id, event, data):
-    """Emit a socket event to all active sessions of a specific user."""
-    for sid, u in _connected_users.items():
-        if u.get('user_id') == user_id:
-            socketio.emit(event, data, to=sid)
+    """Emit a socket event to all active sessions of a specific user, on any instance."""
+    socketio.emit(event, data, to=_user_room(user_id))
+
+
+def _user_semester_ids(db, user_id):
+    """Semester ids for every classroom this user belongs to."""
+    classroom_ids = [c['_id'] for c in db.classrooms.find({'members': ObjectId(user_id)}, {'_id': 1})]
+    if not classroom_ids:
+        return []
+    return [str(s['_id']) for s in db.semesters.find(
+        {'classroom_id': {'$in': [str(cid) for cid in classroom_ids]}}, {'_id': 1}
+    )]
 
 
 def notify_status_change(user_id, show_online):
-    """Update cached privacy setting and broadcast status change to all rooms the user is in.
+    """Broadcast a status change to every semester room this user belongs to.
 
     Called from settings_routes when the user toggles show_online_status so that
-    the change takes effect immediately in existing socket sessions.
+    the change takes effect immediately in existing socket sessions. Looks up room
+    membership from the DB rather than live socket state, so it's correct regardless
+    of which instance(s) the user's socket(s) are connected to.
     """
-    event = 'user_online' if show_online else 'user_offline'
-    rooms_notified = set()
+    from database import get_db
     for u in _connected_users.values():
-        if u.get('user_id') != user_id:
-            continue
-        u['show_online_status'] = show_online
-        for room in u.get('rooms', set()):
-            if room not in rooms_notified:
-                rooms_notified.add(room)
-                socketio.emit(event, {'user_id': user_id}, to=room)
+        if u.get('user_id') == user_id:
+            u['show_online_status'] = show_online
+    event = 'user_online' if show_online else 'user_offline'
+    for semester_id in _user_semester_ids(get_db(), user_id):
+        socketio.emit(event, {'user_id': user_id}, to=semester_id)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -191,6 +205,10 @@ def handle_connect():
             'show_online_status': show_online,
             'rooms': set(),
         }
+        # Every socket for this user joins its own room so emit_to_user() can target
+        # them without needing to know which instance they're connected to.
+        join_room(_user_room(payload['user_id']))
+        presence.mark_connected(payload['user_id'])
         logger.info(f"Socket connected: {payload['user_id']}")
     except Exception as e:
         logger.error(f"Socket connect error: {e}")
@@ -202,11 +220,20 @@ def handle_disconnect():
     user_data = _connected_users.pop(request.sid, None)
     if not user_data:
         return
+    user_id = user_data['user_id']
+    presence.mark_disconnected(user_id)
+    for room in user_data.get('rooms', set()):
+        presence.leave_room_presence(room, user_id)
     if not user_data.get('show_online_status', True):
         return
-    user_id = user_data['user_id']
-    # Only emit offline if this was the user's last active session
-    still_connected = any(u['user_id'] == user_id for u in _connected_users.values())
+    # Only emit offline if this was the user's last active session.
+    # Redis (when configured) knows about sessions on other instances too;
+    # without it, fall back to this process's local view.
+    remaining = presence.online_user_ids([user_id])
+    if remaining is not None:
+        still_connected = user_id in remaining
+    else:
+        still_connected = any(u['user_id'] == user_id for u in _connected_users.values())
     if not still_connected:
         for room in user_data.get('rooms', set()):
             socketio.emit('user_offline', {'user_id': user_id}, to=room)
@@ -226,6 +253,7 @@ def handle_join_room(data):
     if not _is_semester_member(db, semester_id, user_data['user_id']):
         return
     join_room(semester_id)
+    presence.join_room_presence(semester_id, user_data['user_id'])
     user_data['rooms'].add(semester_id)
     emit('joined', {'semester_id': semester_id})
     # Re-read privacy setting from DB (may have changed since connect)
@@ -967,7 +995,9 @@ def get_online_status():
         user_ids = request.args.getlist('user_ids')
         if not user_ids:
             return jsonify({'online_user_ids': []}), 200
-        socket_online = {u['user_id'] for u in _connected_users.values() if u['user_id'] in user_ids}
+        socket_online = presence.online_user_ids(user_ids)
+        if socket_online is None:  # Redis not configured — fall back to local process state
+            socket_online = {u['user_id'] for u in _connected_users.values() if u['user_id'] in user_ids}
         if not socket_online:
             return jsonify({'online_user_ids': []}), 200
         # Always check DB for current privacy setting — cached value may be stale
@@ -995,11 +1025,13 @@ def get_online_members(semester_id):
         if not _is_semester_member(db, semester_id, user_id):
             return jsonify({'error': 'Not a member'}), 403
         # Collect user_ids that have joined this room
-        socket_online = {
-            u['user_id']
-            for u in _connected_users.values()
-            if semester_id in u.get('rooms', set())
-        }
+        socket_online = presence.room_online_user_ids(semester_id)
+        if socket_online is None:  # Redis not configured — fall back to local process state
+            socket_online = {
+                u['user_id']
+                for u in _connected_users.values()
+                if semester_id in u.get('rooms', set())
+            }
         if not socket_online:
             return jsonify({'online_user_ids': []}), 200
         # Always check DB for current privacy setting — cached value may be stale
