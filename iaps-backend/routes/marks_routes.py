@@ -631,21 +631,36 @@ def get_cr_class_average(semester_id):
 
 @marks_bp.route('/analytics/file/<file_id>', methods=['GET'])
 def serve_analytics_file(file_id):
-    """Serve analytics file. Auth via ?token= query param."""
+    """Serve analytics file. Auth via ?token= query param.
+    Access follows the same rule as list_analytics: CRs see everything;
+    students see 'public' files and their own 'personal' uploads only."""
     from database import get_db
     try:
         token = request.args.get('token', '')
         if not token:
             return jsonify({'error': 'Token required'}), 401
         try:
-            jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+            payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
         except jwt.InvalidTokenError:
             return jsonify({'error': 'Invalid token'}), 401
+        user_id = payload['user_id']
 
         db = get_db()
         f = db.subject_analytics.find_one({'_id': ObjectId(file_id)})
         if not f:
             return jsonify({'error': 'File not found'}), 404
+
+        try:
+            _, _, _, is_cr = _check_subject_access(db, f['subject_id'], user_id)
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 403
+
+        visibility = f.get('visibility', 'public')
+        if not is_cr and not (
+            visibility == 'public' or
+            (visibility == 'personal' and f.get('uploaded_by') == user_id)
+        ):
+            return jsonify({'error': 'Access denied'}), 403
 
         path = os.path.join(ANALYTICS_DIR, f['stored_name'])
         if not os.path.exists(path):

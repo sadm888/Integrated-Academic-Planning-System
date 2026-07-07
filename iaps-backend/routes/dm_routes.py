@@ -10,7 +10,7 @@ from werkzeug.utils import secure_filename
 from middleware import token_required, SECRET_KEY
 from socketio_instance import socketio
 from utils.mime_check import is_dangerous
-from utils import toggle_reaction
+from utils import cas_update_reactions, ConcurrentUpdateError
 from utils.encryption import encrypt_text, decrypt_text
 
 dm_bp = Blueprint('dm', __name__, url_prefix='/api/dm')
@@ -503,15 +503,18 @@ def react_to_dm(classroom_id, message_id):
         emoji = (data.get('emoji') or '').strip()
         if not emoji:
             return jsonify({'error': 'emoji is required'}), 400
-        msg = db.dm_messages.find_one({'_id': ObjectId(message_id), 'classroom_id': classroom_id})
+        oid = ObjectId(message_id)
+        msg = db.dm_messages.find_one({'_id': oid, 'classroom_id': classroom_id})
         if not msg:
             return jsonify({'error': 'Message not found'}), 404
         if msg['sender_id'] != user_id and msg['receiver_id'] != user_id:
             return jsonify({'error': 'Access denied'}), 403
 
-        reactions = toggle_reaction(msg.get('reactions', []), emoji, user_id)
-        db.dm_messages.update_one({'_id': ObjectId(message_id)}, {'$set': {'reactions': reactions}})
-        updated = db.dm_messages.find_one({'_id': ObjectId(message_id)})
+        try:
+            cas_update_reactions(db.dm_messages, {'_id': oid, 'classroom_id': classroom_id}, emoji, user_id)
+        except ConcurrentUpdateError:
+            return jsonify({'error': 'Too many concurrent reactions — please try again'}), 409
+        updated = db.dm_messages.find_one({'_id': oid})
         payload = _serialize_dm(updated)
         room = _dm_room(classroom_id, msg['sender_id'], msg['receiver_id'])
         socketio.emit('dm_reaction_updated', payload, to=room)

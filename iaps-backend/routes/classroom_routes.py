@@ -656,8 +656,8 @@ def remove_member(classroom_id):
         # Notify the removed user via socket
         try:
             from routes.chat_routes import emit_to_user
-            cr_user = db.users.find_one({'_id': ObjectId(cr_user_id)}, {'display_name': 1, 'name': 1})
-            cr_name = (cr_user.get('display_name') or cr_user.get('name', 'CR')) if cr_user else 'CR'
+            cr_user = db.users.find_one({'_id': ObjectId(cr_user_id)}, {'fullName': 1, 'username': 1})
+            cr_name = (cr_user.get('fullName') or cr_user.get('username', 'CR')) if cr_user else 'CR'
             emit_to_user(target_user_id, 'member_removed', {
                 'classroom_id': classroom_id,
                 'classroom_name': classroom.get('name', ''),

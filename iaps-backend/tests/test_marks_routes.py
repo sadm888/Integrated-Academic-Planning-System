@@ -1,7 +1,12 @@
 """Tests for routes/marks_routes.py"""
+import os
+from datetime import datetime, timezone
+from uuid import uuid4
+
 import pytest
 from bson import ObjectId
 from tests.helpers import make_classroom, make_subject
+from routes.marks_routes import ANALYTICS_DIR
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -284,3 +289,75 @@ class TestSaveMyMarks:
         _, _, subject = _make_class_and_subject(db, user['_id'])
         resp = client.post(f'/api/marks/my/{subject["_id"]}', json={'entries': []})
         assert resp.status_code == 401
+
+
+class TestServeAnalyticsFile:
+    """Access must match list_analytics: CRs see everything; members see
+    'public' files and only their own 'personal' uploads."""
+
+    def _make_file(self, db, subject_id, uploaded_by, visibility='public'):
+        stored_name = f"{uuid4().hex}_test.csv"
+        with open(os.path.join(ANALYTICS_DIR, stored_name), 'w') as fh:
+            fh.write('col1,col2\n1,2\n')
+        result = db.subject_analytics.insert_one({
+            'subject_id': subject_id,
+            'filename': 'test.csv',
+            'stored_name': stored_name,
+            'uploaded_by': uploaded_by,
+            'visibility': visibility,
+            'size': 12,
+            'created_at': datetime.now(timezone.utc),
+        })
+        return str(result.inserted_id)
+
+    def test_requires_auth(self, client, registered_user, db):
+        user, _ = registered_user
+        _, _, subject = _make_class_and_subject(db, user['_id'])
+        file_id = self._make_file(db, str(subject['_id']), str(user['_id']))
+        resp = client.get(f'/api/marks/analytics/file/{file_id}')
+        assert resp.status_code == 401
+
+    def test_non_member_denied(self, client, registered_user, second_user, db):
+        user1, _ = registered_user
+        _, token2 = second_user
+        _, _, subject = _make_class_and_subject(db, user1['_id'])
+        file_id = self._make_file(db, str(subject['_id']), str(user1['_id']), 'public')
+        resp = client.get(f'/api/marks/analytics/file/{file_id}?token={token2}')
+        assert resp.status_code == 403
+
+    def test_cr_can_access_personal_file_of_another_member(self, client, registered_user, second_user, db):
+        user1, token1 = registered_user  # CR (classroom creator)
+        user2, _ = second_user
+        classroom, _, subject = _make_class_and_subject(db, user1['_id'])
+        db.classrooms.update_one({'_id': classroom['_id']}, {'$push': {'members': user2['_id']}})
+        file_id = self._make_file(db, str(subject['_id']), str(user2['_id']), 'personal')
+        resp = client.get(f'/api/marks/analytics/file/{file_id}?token={token1}')
+        assert resp.status_code == 200
+
+    def test_member_can_access_public_file(self, client, registered_user, second_user, db):
+        user1, _ = registered_user
+        user2, token2 = second_user
+        classroom, _, subject = _make_class_and_subject(db, user1['_id'])
+        db.classrooms.update_one({'_id': classroom['_id']}, {'$push': {'members': user2['_id']}})
+        file_id = self._make_file(db, str(subject['_id']), str(user1['_id']), 'public')
+        resp = client.get(f'/api/marks/analytics/file/{file_id}?token={token2}')
+        assert resp.status_code == 200
+
+    def test_member_denied_for_others_personal_file(self, client, registered_user, second_user, db):
+        user1, token1 = registered_user
+        user2, token2 = second_user
+        classroom, _, subject = _make_class_and_subject(db, user1['_id'])
+        db.classrooms.update_one({'_id': classroom['_id']}, {'$push': {'members': user2['_id']}})
+        # user1 is CR here, so use a personal file uploaded by user1, accessed by non-CR user2
+        file_id = self._make_file(db, str(subject['_id']), str(user1['_id']), 'personal')
+        resp = client.get(f'/api/marks/analytics/file/{file_id}?token={token2}')
+        assert resp.status_code == 403
+
+    def test_member_can_access_own_personal_file(self, client, registered_user, second_user, db):
+        user1, _ = registered_user
+        user2, token2 = second_user
+        classroom, _, subject = _make_class_and_subject(db, user1['_id'])
+        db.classrooms.update_one({'_id': classroom['_id']}, {'$push': {'members': user2['_id']}})
+        file_id = self._make_file(db, str(subject['_id']), str(user2['_id']), 'personal')
+        resp = client.get(f'/api/marks/analytics/file/{file_id}?token={token2}')
+        assert resp.status_code == 200

@@ -26,7 +26,12 @@ export function useSocket(semesterId, handlers = {}) {
     const token = localStorage.getItem('token');
     const socket = io(BACKEND_URL, {
       query: { token },
-      transports: ['websocket', 'polling'],
+      // Backend runs under gunicorn's gthread worker (no eventlet/gevent), which
+      // can't hold a native WebSocket connection open — every connection attempt
+      // would try websocket first, fail/time out, then fall back to polling,
+      // costing several seconds on every page that opens a socket. Skip straight
+      // to polling until the backend runs under an async worker again.
+      transports: ['polling'],
     });
     socketRef.current = socket;
 

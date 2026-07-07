@@ -153,6 +153,55 @@ def toggle_todo(todo_id):
         return jsonify({'error': 'Failed to update todo'}), 500
 
 
+@todo_bp.route('/<todo_id>', methods=['PATCH'])
+@token_required
+def update_todo(todo_id):
+    """Edit a todo's text, subject link, and/or due date. Creator only."""
+    from database import get_db
+
+    try:
+        user_id = request.user['user_id']
+        data = request.get_json()
+        text = (data.get('text') or '').strip()
+
+        if not text:
+            return jsonify({'error': 'Text is required'}), 400
+
+        db = get_db()
+
+        todo = db.todos.find_one({'_id': ObjectId(todo_id)})
+        if not todo:
+            return jsonify({'error': 'Todo not found'}), 404
+
+        if todo['created_by'] != user_id:
+            return jsonify({'error': 'Permission denied'}), 403
+
+        updates = {'text': text, 'updated_at': datetime.now(timezone.utc)}
+        # subject_id/due_date are optional on the request; only touch a field if
+        # the client actually sent it, so a client that only cares about editing
+        # text doesn't accidentally clear an existing subject link or due date.
+        if 'subject_id' in data:
+            updates['subject_id'] = (data.get('subject_id') or '').strip() or None
+        if 'due_date' in data:
+            updates['due_date'] = (data.get('due_date') or '').strip() or None
+
+        db.todos.update_one(
+            {'_id': ObjectId(todo_id)},
+            {'$set': updates}
+        )
+
+        return jsonify({
+            'message': 'Todo updated',
+            'text': text,
+            'subject_id': updates.get('subject_id', todo.get('subject_id')),
+            'due_date': updates.get('due_date', todo.get('due_date')),
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Update todo error: {e}")
+        return jsonify({'error': 'Failed to update todo'}), 500
+
+
 @todo_bp.route('/<todo_id>', methods=['DELETE'])
 @token_required
 def delete_todo(todo_id):

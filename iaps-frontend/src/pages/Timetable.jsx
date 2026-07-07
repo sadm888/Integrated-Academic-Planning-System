@@ -584,6 +584,7 @@ function SlotEditModal({ day, slot, cell, onClose, onSave, onMove, editGrid, day
           </button>
           {cell?.subject && (
             <button type="button" disabled={loading} onClick={async () => {
+              if (!window.confirm(`Clear ${day} · ${slot}? This removes the subject/teacher/room for this slot.`)) return;
               setLoading(true);
               try { await onSave(day, slot, { subject: '', teacher: '', room: '', type: 'Free', notes: '', link: '' }); onClose(); }
               finally { setLoading(false); }

@@ -9,5 +9,5 @@ limiter = Limiter(
     # REDIS_URL unset -> in-process storage (fine for a single instance/dev).
     # Set REDIS_URL in prod once running more than one instance, or limits
     # become per-instance and stop meaning anything.
-    storage_uri=os.environ.get('REDIS_URL', 'memory://'),
+    storage_uri=os.environ.get('REDIS_URL', '').strip() or 'memory://',
 )

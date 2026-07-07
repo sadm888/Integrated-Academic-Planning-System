@@ -26,7 +26,10 @@ export function useDMSocket(classroomId, withUserId, handlers = {}) {
     const token = localStorage.getItem('token');
     const socket = io(BACKEND_URL, {
       query: { token },
-      transports: ['websocket', 'polling'],
+      // See useSocket.js — backend's gthread worker can't hold a native
+      // WebSocket open, so skip straight to polling instead of wasting
+      // several seconds on a doomed websocket attempt first.
+      transports: ['polling'],
     });
     socketRef.current = socket;
 

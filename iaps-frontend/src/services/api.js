@@ -101,6 +101,9 @@ export const todoAPI = {
   create: (data) => api.post('/todo/create', data),
   list: (semesterId) => api.get(`/todo/semester/${semesterId}/list`),
   toggle: (todoId) => api.patch(`/todo/${todoId}/toggle`),
+  update: (todoId, text, subjectId, dueDate) => api.patch(`/todo/${todoId}`, {
+    text, subject_id: subjectId ?? '', due_date: dueDate ?? '',
+  }),
   delete: (todoId) => api.delete(`/todo/${todoId}`),
 };
 
@@ -346,6 +349,7 @@ export const aiAPI = {
   uploadPdf: (formData) =>
     api.post('/ai/pdf/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
   listPdfs:          ()                  => api.get('/ai/pdf/list'),
+  reindexPdf:        (pdfId)             => api.post(`/ai/pdf/${pdfId}/reindex`),
   deletePdf:         (pdfId)             => api.delete(`/ai/pdf/${pdfId}`),
   listResourcePdfs:  ()                  => api.get('/ai/pdf/list-resources'),
   importResourcePdf: (resourceId, sourceType = 'academic') => api.post('/ai/pdf/import-resource', { resource_id: resourceId, source_type: sourceType }),

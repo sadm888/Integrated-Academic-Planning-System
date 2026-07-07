@@ -431,7 +431,7 @@ def save_timetable(semester_id):
 
             if changed_cells:
                 cr_user = db.users.find_one({'_id': ObjectId(user_id)})
-                cr_name = (cr_user.get('display_name') or cr_user.get('username', 'CR')) if cr_user else 'CR'
+                cr_name = (cr_user.get('fullName') or cr_user.get('username', 'CR')) if cr_user else 'CR'
 
                 notif_msg = f"Timetable updated: {len(changed_cells)} slot(s) changed in the base timetable."
                 try:
@@ -710,7 +710,7 @@ def add_override(semester_id):
 
         # Get CR's display name for notifications
         cr_user = db.users.find_one({'_id': ObjectId(user_id)})
-        cr_name = cr_user.get('display_name') or cr_user.get('username', 'CR') if cr_user else 'CR'
+        cr_name = cr_user.get('fullName') or cr_user.get('username', 'CR') if cr_user else 'CR'
 
         timetable = db.timetables.find_one({'semester_id': semester_id})
         timetable_id = str(timetable['_id']) if timetable else ''

@@ -581,6 +581,7 @@ function Chat({ user }) {
   // List entry interactions
   const [addingEntry, setAddingEntry]     = useState(null); // {msgId, text}
   const [editingEntry, setEditingEntry]   = useState(null); // {msgId, idx, text}
+  const [votingPolls, setVotingPolls]     = useState(new Set()); // msgIds with a vote in flight
 
   // Attach-from-docs states
   const [showAttachMenu, setShowAttachMenu]     = useState(false);
@@ -1213,6 +1214,21 @@ function Chat({ user }) {
       const totalVotes = poll.options.reduce((s, o) => s + (o.voters?.length || 0), 0);
       const userVotedIdx = poll.options.findIndex(o => o.voters?.includes(user?.id));
       const isCrOrMod = semester?.is_user_cr || semester?.is_user_mod;
+      const isVoting = votingPolls.has(msg.id);
+      const castVote = async (idx) => {
+        // Voting toggles server-side (same option twice = unvote), so a second click
+        // firing while the first request is still in flight — the "lag" — silently
+        // undoes the vote instead of just being a wasted click. Block re-entry per poll.
+        if (poll.is_closed || isVoting) return;
+        setVotingPolls(prev => new Set(prev).add(msg.id));
+        try {
+          await chatAPI.votePoll(semesterId, msg.id, idx);
+        } catch (err) {
+          setError(err.response?.data?.error || 'Failed to vote');
+        } finally {
+          setVotingPolls(prev => { const next = new Set(prev); next.delete(msg.id); return next; });
+        }
+      };
       return (
         <div style={{ minWidth: '220px' }}>
           <div style={{ fontWeight: 700, fontSize: '14px', marginBottom: '10px', color: isMe ? 'white' : 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1226,8 +1242,8 @@ function Chat({ user }) {
               return (
                 <button
                   key={idx}
-                  onClick={() => !poll.is_closed && chatAPI.votePoll(semesterId, msg.id, idx).catch(err => setError(err.response?.data?.error || 'Failed to vote'))}
-                  disabled={poll.is_closed}
+                  onClick={() => castVote(idx)}
+                  disabled={poll.is_closed || isVoting}
                   style={{
                     position: 'relative', overflow: 'hidden',
                     padding: '7px 12px', borderRadius: '8px', border: 'none',
@@ -1235,7 +1251,8 @@ function Chat({ user }) {
                       ? (voted ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.12)')
                       : (voted ? 'var(--primary-subtle)' : 'var(--bg-color)'),
                     color: isMe ? 'white' : 'var(--text-primary)',
-                    cursor: poll.is_closed ? 'default' : 'pointer',
+                    cursor: (poll.is_closed || isVoting) ? 'default' : 'pointer',
+                    opacity: isVoting ? 0.6 : 1,
                     textAlign: 'left', fontSize: '13px', fontWeight: voted ? 700 : 400,
                     outline: voted ? `2px solid ${isMe ? 'rgba(255,255,255,0.7)' : 'var(--primary-color)'}` : 'none',
                     transition: 'background 0.15s',
@@ -1273,14 +1290,28 @@ function Chat({ user }) {
       const isAddingHere = addingEntry?.msgId === msg.id;
 
       const commitEditEntry = async (text) => {
-        if (!text.trim()) return;
-        try { await chatAPI.editListEntry(semesterId, msg.id, editingEntry.idx, text.trim()); setEditingEntry(null); }
-        catch (err) { setError(err.response?.data?.error || 'Failed to edit entry'); }
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        const { idx } = editingEntry;
+        // Close immediately (optimistic) instead of waiting for the request to
+        // finish — otherwise the input/confirm button stay clickable during the
+        // round-trip and a second Enter/click while it's in flight double-submits.
+        setEditingEntry(null);
+        try { await chatAPI.editListEntry(semesterId, msg.id, idx, trimmed); }
+        catch (err) {
+          setError(err.response?.data?.error || 'Failed to edit entry');
+          setEditingEntry({ msgId: msg.id, idx, text: trimmed }); // restore so the edit isn't lost
+        }
       };
       const commitAddEntry = async (text) => {
-        if (!text.trim()) return;
-        try { await chatAPI.addListEntry(semesterId, msg.id, text.trim()); setAddingEntry(null); }
-        catch (err) { setError(err.response?.data?.error || 'Failed to add entry'); }
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        setAddingEntry(null); // see commitEditEntry — prevents double-submit during the lag
+        try { await chatAPI.addListEntry(semesterId, msg.id, trimmed); }
+        catch (err) {
+          setError(err.response?.data?.error || 'Failed to add entry');
+          setAddingEntry({ msgId: msg.id, text: trimmed }); // restore so the entry isn't lost
+        }
       };
       const commitDeleteEntry = async (idx) => {
         try { await chatAPI.deleteListEntry(semesterId, msg.id, idx); }

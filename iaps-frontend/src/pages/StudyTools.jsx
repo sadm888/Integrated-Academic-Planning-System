@@ -186,6 +186,16 @@ export default function StudyTools() {
 
   useEffect(() => { loadPdfs(); }, [loadPdfs]);
 
+  // Poll while anything is still indexing — otherwise a PDF that finishes
+  // indexing after the initial load just sits there looking stuck until
+  // the user manually refreshes the page.
+  useEffect(() => {
+    const stillIndexing = pdfs.some(p => !p.indexed && !p.index_error);
+    if (!stillIndexing) return;
+    const id = setInterval(loadPdfs, 5000);
+    return () => clearInterval(id);
+  }, [pdfs, loadPdfs]);
+
   const selectedPdf = pdfs.find(p => p.pdf_id === selected);
 
   return (
@@ -324,6 +334,21 @@ function PdfSidebar({ pdfs, selected, loading, onSelect, onDeleted, onUploaded, 
     }
   };
 
+  const [retrying, setRetrying] = useState(null); // pdf_id currently retrying
+
+  const handleRetry = async (pdfId, e) => {
+    e.stopPropagation();
+    setRetrying(pdfId);
+    try {
+      await aiAPI.reindexPdf(pdfId);
+      onUploaded(); // reuse the same "refetch the list" callback
+    } catch {
+      setError('Retry failed');
+    } finally {
+      setRetrying(null);
+    }
+  };
+
   const handleDelete = async (pdfId, e) => {
     e.stopPropagation();
     if (!window.confirm('Delete this PDF and all its indexes?')) return;
@@ -399,11 +424,28 @@ function PdfSidebar({ pdfs, selected, loading, onSelect, onDeleted, onUploaded, 
               <div style={{ fontSize: '12px', fontWeight: 600, color: c.textPri, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {pdf.filename}
               </div>
-              <div style={{ fontSize: '10px', color: c.textSec }}>
+              <div style={{ fontSize: '10px', color: c.textSec, display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                 {fmtBytes(pdf.size)} · {pdf.indexed
                   ? <span style={{ color: '#10b981' }}><CheckCircle size={11} style={{ verticalAlign: 'middle', marginRight: '2px' }} />Ready</span>
-                  : <span style={{ color: '#f59e0b' }}><Loader size={11} style={{ ...spin, verticalAlign: 'middle', marginRight: '2px' }} />Indexing</span>
+                  : pdf.index_error
+                    ? <span style={{ color: '#ef4444' }} title={pdf.index_error}><AlertCircle size={11} style={{ verticalAlign: 'middle', marginRight: '2px' }} />Failed</span>
+                    : <span style={{ color: '#f59e0b' }}><Loader size={11} style={{ ...spin, verticalAlign: 'middle', marginRight: '2px' }} />Indexing</span>
                 }
+                {pdf.index_error && (
+                  <button
+                    onClick={e => handleRetry(pdf.pdf_id, e)}
+                    disabled={retrying === pdf.pdf_id}
+                    style={{
+                      background: 'none', border: 'none', cursor: retrying === pdf.pdf_id ? 'default' : 'pointer',
+                      color: c.accent, fontSize: '10px', fontWeight: 600, padding: 0,
+                      display: 'flex', alignItems: 'center', gap: '2px',
+                      opacity: retrying === pdf.pdf_id ? 0.5 : 1,
+                    }}
+                  >
+                    <RefreshCw size={10} style={retrying === pdf.pdf_id ? spin : undefined} />
+                    {retrying === pdf.pdf_id ? 'Retrying…' : 'Retry'}
+                  </button>
+                )}
               </div>
             </div>
             <button

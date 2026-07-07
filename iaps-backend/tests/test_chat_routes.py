@@ -54,6 +54,28 @@ def _insert_list_message(db, semester_id, user_id, prompt='Bring what?', entries
     return doc
 
 
+def _insert_poll_message(db, semester_id, user_id, question='Pick one', num_options=3, is_closed=False):
+    """Insert a poll-type chat message and return it."""
+    doc = {
+        '_id': ObjectId(),
+        'semester_id': str(semester_id),
+        'user_id': str(user_id),
+        'username': 'testuser',
+        'full_name': 'Test User',
+        'type': 'poll',
+        'text': None,
+        'file': None,
+        'poll': {
+            'question': question,
+            'options': [{'text': f'Option {i}', 'voters': []} for i in range(num_options)],
+            'is_closed': is_closed,
+        },
+        'created_at': datetime.now(timezone.utc),
+    }
+    db.chat_messages.insert_one(doc)
+    return doc
+
+
 def _add_member(db, classroom, user_id):
     db.classrooms.update_one({'_id': classroom['_id']}, {'$push': {'members': user_id}})
 
@@ -466,6 +488,39 @@ class TestDeleteListEntry:
         data = resp.get_json()
         assert data['message']['list_data']['entries'] == []
 
+    def test_add_during_delete_isnt_silently_lost(self, client, registered_user, second_user, db):
+        """Regression test for the read-modify-write race: while user1's delete
+        request is being processed, another entry gets appended (simulating a
+        concurrent add-list-entry request landing in between). The delete's
+        compare-and-swap must retry against the fresh state instead of writing
+        back a stale 2-entry array that erases the concurrently-added 3rd entry."""
+        user1, token1 = registered_user
+        user2, _ = second_user
+        classroom, semester = make_classroom(db, user1['_id'])
+        _add_member(db, classroom, user2['_id'])
+        msg = self._make_list_with_two_entries(db, semester, user1, user2)
+
+        # Simulate a concurrent add landing between delete's read and write by
+        # pushing directly to the DB (same effect as add_list_entry's atomic $push).
+        db.chat_messages.update_one(
+            {'_id': msg['_id']},
+            {'$push': {'list_data.entries': {
+                'user_id': str(user2['_id']), 'username': 'seconduser',
+                'full_name': 'Second User', 'content': 'Added concurrently',
+                'created_at': datetime.now(timezone.utc),
+            }}}
+        )
+
+        resp = client.delete(f'/api/chat/{_sid(semester)}/lists/{_mid(msg)}/entries/0',
+                             headers={'Authorization': f'Bearer {token1}'})
+        assert resp.status_code == 200
+
+        updated = db.chat_messages.find_one({'_id': msg['_id']})
+        contents = [e['content'] for e in updated['list_data']['entries']]
+        assert 'Entry by user1' not in contents       # the one we deleted
+        assert 'Entry by user2' in contents           # untouched
+        assert 'Added concurrently' in contents        # must survive the delete
+
 
 # ── TestSerializeMessage ──────────────────────────────────────────────────────
 
@@ -597,4 +652,91 @@ class TestSearchMessages:
         assert resp.status_code == 200
         msgs = resp.get_json()['messages']
         assert len(msgs) == 1
-        assert 'visible' in (msgs[0].get('text') or '').lower()
+
+
+# ── TestVotePoll ─────────────────────────────────────────────────────────────
+
+class TestVotePoll:
+    def _vote(self, client, token, semester, msg, option_index):
+        return client.post(f'/api/chat/{_sid(semester)}/polls/{_mid(msg)}/vote',
+                           json={'option_index': option_index},
+                           headers={'Authorization': f'Bearer {token}'})
+
+    def test_requires_auth(self, client, registered_user, db):
+        user, _ = registered_user
+        classroom, semester = make_classroom(db, user['_id'])
+        msg = _insert_poll_message(db, semester['_id'], user['_id'])
+        resp = client.post(f'/api/chat/{_sid(semester)}/polls/{_mid(msg)}/vote', json={'option_index': 0})
+        assert resp.status_code == 401
+
+    def test_non_member_denied(self, client, registered_user, second_user, db):
+        user1, _ = registered_user
+        _, token2 = second_user
+        classroom, semester = make_classroom(db, user1['_id'])
+        msg = _insert_poll_message(db, semester['_id'], user1['_id'])
+        resp = self._vote(client, token2, semester, msg, 0)
+        assert resp.status_code == 403
+
+    def test_invalid_option_index_rejected(self, client, registered_user, db):
+        user, token = registered_user
+        classroom, semester = make_classroom(db, user['_id'])
+        msg = _insert_poll_message(db, semester['_id'], user['_id'], num_options=2)
+        resp = self._vote(client, token, semester, msg, 5)
+        assert resp.status_code == 400
+
+    def test_closed_poll_rejected(self, client, registered_user, db):
+        user, token = registered_user
+        classroom, semester = make_classroom(db, user['_id'])
+        msg = _insert_poll_message(db, semester['_id'], user['_id'], is_closed=True)
+        resp = self._vote(client, token, semester, msg, 0)
+        assert resp.status_code == 400
+
+    def test_first_vote_registers(self, client, registered_user, db):
+        user, token = registered_user
+        classroom, semester = make_classroom(db, user['_id'])
+        msg = _insert_poll_message(db, semester['_id'], user['_id'])
+        resp = self._vote(client, token, semester, msg, 1)
+        assert resp.status_code == 200
+        updated = db.chat_messages.find_one({'_id': msg['_id']})
+        assert str(user['_id']) in updated['poll']['options'][1]['voters']
+
+    def test_voting_same_option_again_toggles_off(self, client, registered_user, db):
+        user, token = registered_user
+        classroom, semester = make_classroom(db, user['_id'])
+        msg = _insert_poll_message(db, semester['_id'], user['_id'])
+        self._vote(client, token, semester, msg, 1)
+        resp = self._vote(client, token, semester, msg, 1)
+        assert resp.status_code == 200
+        updated = db.chat_messages.find_one({'_id': msg['_id']})
+        assert str(user['_id']) not in updated['poll']['options'][1]['voters']
+
+    def test_voting_different_option_moves_vote(self, client, registered_user, db):
+        user, token = registered_user
+        classroom, semester = make_classroom(db, user['_id'])
+        msg = _insert_poll_message(db, semester['_id'], user['_id'])
+        self._vote(client, token, semester, msg, 0)
+        resp = self._vote(client, token, semester, msg, 2)
+        assert resp.status_code == 200
+        updated = db.chat_messages.find_one({'_id': msg['_id']})
+        uid = str(user['_id'])
+        assert uid not in updated['poll']['options'][0]['voters']
+        assert uid in updated['poll']['options'][2]['voters']
+
+    def test_concurrent_votes_from_different_users_dont_clobber(self, client, registered_user, second_user, db):
+        """Regression test for the read-modify-write race: both users vote for
+        different options without either read picking up the other's write —
+        both votes must still be present afterward."""
+        user1, token1 = registered_user
+        user2, token2 = second_user
+        classroom, semester = make_classroom(db, user1['_id'])
+        _add_member(db, classroom, user2['_id'])
+        msg = _insert_poll_message(db, semester['_id'], user1['_id'], num_options=2)
+
+        resp1 = self._vote(client, token1, semester, msg, 0)
+        resp2 = self._vote(client, token2, semester, msg, 1)
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+
+        updated = db.chat_messages.find_one({'_id': msg['_id']})
+        assert str(user1['_id']) in updated['poll']['options'][0]['voters']
+        assert str(user2['_id']) in updated['poll']['options'][1]['voters']

@@ -228,6 +228,7 @@ function MarksDetail({ user }) {
   };
 
   const handleDeleteAnalytics = async (fileId) => {
+    if (!window.confirm('Delete this analytics file? This cannot be undone.')) return;
     try {
       await marksAPI.deleteAnalytics(subjectId, fileId);
       setAnalytics(p => p.filter(f => f.id !== fileId));

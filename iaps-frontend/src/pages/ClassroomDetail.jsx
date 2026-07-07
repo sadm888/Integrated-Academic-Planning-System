@@ -117,7 +117,9 @@ function ClassroomDetail({ user, onDmRead }) {
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) return;
-    const socket = io(BACKEND_URL, { query: { token }, transports: ['websocket', 'polling'] });
+    // Backend's gthread worker can't hold a native WebSocket open — skip
+    // straight to polling instead of wasting time on a doomed websocket attempt.
+    const socket = io(BACKEND_URL, { query: { token }, transports: ['polling'] });
     socket.on('cr_nominated', () => {
       classroomAPI.getPendingNominations(classroomId)
         .then(r => setPendingNominations(r.data.nominations || []))

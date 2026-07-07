@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import SemesterSubnav from '../components/SemesterSubnav';
 import { semesterAPI, subjectAPI, documentAPI, todoAPI, classroomAPI, announcementAPI, linksAPI, timetableAPI, BACKEND_URL } from '../services/api';
 import '../styles/Classroom.css';
-import { Link as LinkIcon, X, FileText, Megaphone, Clock, ClipboardList, ChevronDown, ChevronRight } from 'lucide-react';
+import { Link as LinkIcon, X, FileText, Megaphone, Clock, ClipboardList, ChevronDown, ChevronRight, Pencil, Check } from 'lucide-react';
 
 function SemesterDetail({ user }) {
   const { classroomId, semesterId } = useParams();
@@ -43,6 +43,10 @@ function SemesterDetail({ user }) {
   const [newTodoSubjectId, setNewTodoSubjectId] = useState('');
   const [newTodoDueDate, setNewTodoDueDate] = useState('');
   const [todoLoading, setTodoLoading] = useState(false);
+  const [editingTodoId, setEditingTodoId] = useState(null);
+  const [editTodoText, setEditTodoText] = useState('');
+  const [editTodoSubjectId, setEditTodoSubjectId] = useState('');
+  const [editTodoDueDate, setEditTodoDueDate] = useState('');
   const [todoFilterSubjectId, setTodoFilterSubjectId] = useState('');
 
   const [docSearch, setDocSearch] = useState('');
@@ -358,6 +362,35 @@ function SemesterDetail({ user }) {
       await todoAPI.delete(todoId);
       setTodos(prev => prev.filter(t => t.id !== todoId));
     } catch (err) { setError(err.response?.data?.error || 'Failed to delete todo'); }
+  };
+
+  const startEditTodo = (todo) => {
+    setEditingTodoId(todo.id);
+    setEditTodoText(todo.text);
+    setEditTodoSubjectId(todo.subject_id || '');
+    setEditTodoDueDate(todo.due_date || '');
+  };
+
+  const cancelEditTodo = () => {
+    setEditingTodoId(null);
+    setEditTodoText('');
+    setEditTodoSubjectId('');
+    setEditTodoDueDate('');
+  };
+
+  const saveEditTodo = async (todoId) => {
+    const text = editTodoText.trim();
+    if (!text) { cancelEditTodo(); return; }
+    const subjectId = editTodoSubjectId || null;
+    const dueDate = editTodoDueDate || null;
+    try {
+      await todoAPI.update(todoId, text, subjectId, dueDate);
+      setTodos(prev => prev.map(t => t.id === todoId ? { ...t, text, subject_id: subjectId, due_date: dueDate } : t));
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update todo');
+    } finally {
+      cancelEditTodo();
+    }
   };
 
   // ── Announcements ────────────────────────────────────────────────────────────
@@ -1025,12 +1058,73 @@ function SemesterDetail({ user }) {
                         </span>
                       )}
                     </div>
-                    <p style={{
-                      margin: 0, fontSize: '14px', lineHeight: '1.4',
-                      textDecoration: todo.completed ? 'line-through' : 'none',
-                      color: todo.completed ? '#999' : isOverdue ? '#dc2626' : 'var(--text-primary)', wordBreak: 'break-word',
-                    }}>{todo.text}</p>
+                    {editingTodoId === todo.id ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <input
+                          type="text"
+                          value={editTodoText}
+                          autoFocus
+                          onChange={(e) => setEditTodoText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') cancelEditTodo();
+                          }}
+                          style={{
+                            width: '100%', fontSize: '14px', padding: '4px 6px',
+                            border: '1px solid var(--border-color)', borderRadius: '4px',
+                            background: 'var(--bg-color)', color: 'var(--text-primary)',
+                          }}
+                        />
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          {subjects.length > 0 && (
+                            <select
+                              value={editTodoSubjectId}
+                              onChange={e => setEditTodoSubjectId(e.target.value)}
+                              style={{
+                                flex: 1, minWidth: 0, padding: '3px 5px', fontSize: '12px',
+                                border: '1px solid var(--border-color)', borderRadius: '4px',
+                                background: 'var(--card-bg)', color: 'var(--text-primary)',
+                              }}
+                            >
+                              <option value="">No subject</option>
+                              {subjects.map(s => (
+                                <option key={s.id} value={s.id}>{s.code ? `${s.code} — ` : ''}{s.name}</option>
+                              ))}
+                            </select>
+                          )}
+                          <input
+                            type="date"
+                            value={editTodoDueDate}
+                            onChange={e => setEditTodoDueDate(e.target.value)}
+                            style={{
+                              padding: '3px 5px', fontSize: '12px',
+                              border: '1px solid var(--border-color)', borderRadius: '4px',
+                              background: 'var(--card-bg)', color: 'var(--text-primary)',
+                              flexShrink: 0,
+                            }}
+                          />
+                          <button onClick={() => saveEditTodo(todo.id)} title="Save" style={{
+                            background: '#667eea', border: 'none', borderRadius: '4px', color: 'white',
+                            cursor: 'pointer', padding: '3px 8px', display: 'flex', alignItems: 'center', flexShrink: 0,
+                          }}><Check size={13} /></button>
+                          <button onClick={cancelEditTodo} title="Cancel" style={{
+                            background: 'none', border: '1px solid var(--border-color)', borderRadius: '4px',
+                            color: 'var(--text-secondary)', cursor: 'pointer', padding: '3px 6px',
+                            display: 'flex', alignItems: 'center', flexShrink: 0,
+                          }}><X size={13} /></button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p style={{
+                        margin: 0, fontSize: '14px', lineHeight: '1.4',
+                        textDecoration: todo.completed ? 'line-through' : 'none',
+                        color: todo.completed ? '#999' : isOverdue ? '#dc2626' : 'var(--text-primary)', wordBreak: 'break-word',
+                      }}>{todo.text}</p>
+                    )}
                   </div>
+                  <button onClick={() => startEditTodo(todo)} style={{
+                    background: 'none', border: 'none', color: '#ccc',
+                    cursor: 'pointer', padding: '2px', flexShrink: 0, display: 'flex', alignItems: 'center',
+                  }}><Pencil size={13} strokeWidth={2} /></button>
                   <button onClick={() => handleDeleteTodo(todo.id)} style={{
                     background: 'none', border: 'none', color: '#ccc',
                     cursor: 'pointer', padding: '2px', flexShrink: 0, display: 'flex', alignItems: 'center',

@@ -438,12 +438,23 @@ def _index_pdf(path: str, pdf_id: str):
                 vecs     = embedder.encode(chunks, normalize_embeddings=True, batch_size=32).tolist()
                 col      = _get_chroma().get_or_create_collection(_collection_name(pdf_id))
                 col.add(documents=chunks, embeddings=vecs, metadatas=metas, ids=ids)
-
-            get_db().ai_user_pdfs.update_one(
-                {'pdf_id': pdf_id},
-                {'$set': {'indexed': True, 'chunk_count': len(chunks)}},
-            )
-            logger.info(f"Indexed {len(chunks)} chunks for PDF {pdf_id}")
+                get_db().ai_user_pdfs.update_one(
+                    {'pdf_id': pdf_id},
+                    {'$set': {'indexed': True, 'chunk_count': len(chunks)}},
+                )
+                logger.info(f"Indexed {len(chunks)} chunks for PDF {pdf_id}")
+            else:
+                # Don't claim success when there's nothing to query — a PDF with no
+                # extractable text (scanned/image-only, or an extraction glitch)
+                # would otherwise show "Ready" while every AI feature 400s on it.
+                get_db().ai_user_pdfs.update_one(
+                    {'pdf_id': pdf_id},
+                    {'$set': {
+                        'indexed': False, 'chunk_count': 0,
+                        'index_error': 'No extractable text found in this PDF — it may be a scanned/image-only document.',
+                    }},
+                )
+                logger.warning(f"No chunks extracted for PDF {pdf_id}")
         except Exception as exc:
             logger.exception(f"Indexing failed for {pdf_id}: {exc}")
             try:
@@ -508,6 +519,7 @@ def upload_pdf():
         'indexed':     False,
         'source':      'upload',
         'uploaded_at': datetime.now(timezone.utc),
+        'indexing_started_at': datetime.now(timezone.utc),
     })
 
     _dispatch_index_pdf(stored_ref, pdf_id)
@@ -523,12 +535,38 @@ def list_pdfs():
     pdfs    = list(db.ai_user_pdfs.find(
         {'user_id': user_id},
         {'_id': 0, 'pdf_id': 1, 'filename': 1, 'size': 1, 'indexed': 1,
-         'source': 1, 'chunk_count': 1, 'uploaded_at': 1},
+         'source': 1, 'chunk_count': 1, 'uploaded_at': 1, 'indexing_started_at': 1,
+         'index_error': 1},
     ).sort('uploaded_at', -1).limit(100))
     for p in pdfs:
         if p.get('uploaded_at'):
             p['uploaded_at'] = p['uploaded_at'].isoformat()
+        if p.get('indexing_started_at'):
+            p['indexing_started_at'] = p['indexing_started_at'].isoformat()
     return jsonify({'pdfs': pdfs}), 200
+
+
+@ai_bp.route('/pdf/<pdf_id>/reindex', methods=['POST'])
+@token_required
+def reindex_pdf(pdf_id):
+    """Re-run indexing for a PDF stuck mid-index (e.g. the backend redeployed
+    while a background thread was still working) or that failed outright."""
+    from database import get_db
+    user_id = request.user['user_id']
+    db = get_db()
+    try:
+        doc = _check_pdf_access(db, pdf_id, user_id)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 403
+
+    db.ai_user_pdfs.update_one(
+        {'pdf_id': pdf_id},
+        {'$set': {'indexed': False, 'indexing_started_at': datetime.now(timezone.utc)},
+         '$unset': {'index_error': ''}},
+    )
+    _invalidate_ai_cache(db, pdf_id)
+    _dispatch_index_pdf(doc['stored'], pdf_id)
+    return jsonify({'message': 'Reindexing started'}), 200
 
 
 @ai_bp.route('/pdf/<pdf_id>', methods=['DELETE'])
@@ -702,7 +740,11 @@ def import_resource_pdf():
 
     pdf_id = str(uuid4())
     dst    = os.path.join(AI_PDF_DIR, f'{pdf_id}.pdf')
-    shutil.copy2(src, dst)
+    try:
+        shutil.copy2(src, dst)
+    except (FileNotFoundError, OSError):
+        # Source could have been deleted between the exists() check above and here
+        return jsonify({'error': 'File not found on disk'}), 404
     size   = os.path.getsize(dst)
     stored_ref = save_file(dst, f'ai_pdfs/{pdf_id}.pdf')
 
@@ -716,6 +758,7 @@ def import_resource_pdf():
         'source':      source_type,
         'resource_id': resource_id,
         'uploaded_at': datetime.now(timezone.utc),
+        'indexing_started_at': datetime.now(timezone.utc),
     })
 
     _dispatch_index_pdf(stored_ref, pdf_id)

@@ -1028,7 +1028,10 @@ def serve_academic_file(resource_id):
                 download_name=chat_msg['file'].get('name', 'file'),
             )
 
-        abs_path = os.path.join(UPLOAD_DIR, resource.get('stored_name', ''))
+        stored_name = resource.get('stored_name', '')
+        if not stored_name:
+            return jsonify({'error': 'File not found on disk'}), 404
+        abs_path = os.path.join(UPLOAD_DIR, stored_name)
         if not os.path.exists(abs_path):
             return jsonify({'error': 'File not found on disk'}), 404
 

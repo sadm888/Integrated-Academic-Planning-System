@@ -26,7 +26,7 @@ from middleware import token_required, SECRET_KEY
 from socketio_instance import socketio
 from utils.encryption import encrypt_text, decrypt_text
 from utils.mime_check import is_dangerous
-from utils import toggle_reaction
+from utils import cas_update_reactions, ConcurrentUpdateError
 from utils import presence
 
 chat_bp = Blueprint('chat', __name__, url_prefix='/api/chat')
@@ -866,31 +866,42 @@ def vote_poll(semester_id, message_id):
         option_index = data.get('option_index')
         if option_index is None or not isinstance(option_index, int):
             return jsonify({'error': 'option_index is required'}), 400
-        msg = db.chat_messages.find_one({'_id': ObjectId(message_id), 'semester_id': semester_id, 'type': 'poll'})
-        if not msg:
-            return jsonify({'error': 'Poll not found'}), 404
-        poll = msg.get('poll', {})
-        if poll.get('is_closed'):
-            return jsonify({'error': 'Poll is closed'}), 400
-        options = poll.get('options', [])
-        if option_index < 0 or option_index >= len(options):
-            return jsonify({'error': 'Invalid option'}), 400
-        # Determine toggle: was user already on this option?
-        was_on_same = user_id in (msg['poll']['options'][option_index].get('voters', []))
-        # Build updated options in-memory: remove user from all, then add to chosen (unless toggling off)
-        for opt in options:
-            opt['voters'] = [v for v in opt.get('voters', []) if v != user_id]
-        if not was_on_same:
-            options[option_index]['voters'].append(user_id)
-        # Write atomically — findAndModify pattern: only update if doc hasn't changed since we read it
-        result = db.chat_messages.update_one(
-            {'_id': ObjectId(message_id), 'poll.is_closed': {'$ne': True}},
-            {'$set': {'poll.options': options}}
-        )
-        if result.matched_count == 0:
-            return jsonify({'error': 'Poll is closed or no longer exists'}), 400
+
+        oid = ObjectId(message_id)
+        # Compare-and-swap with retry instead of a blind read-modify-write: the
+        # write only applies if poll.options still matches exactly what we read,
+        # so a concurrent vote (different user, or the same user double-clicking
+        # during network lag) can't silently overwrite another vote — we just
+        # retry against the fresh state instead.
+        for _attempt in range(5):
+            msg = db.chat_messages.find_one({'_id': oid, 'semester_id': semester_id, 'type': 'poll'})
+            if not msg:
+                return jsonify({'error': 'Poll not found'}), 404
+            poll = msg.get('poll', {})
+            if poll.get('is_closed'):
+                return jsonify({'error': 'Poll is closed'}), 400
+            options = poll.get('options', [])
+            if option_index < 0 or option_index >= len(options):
+                return jsonify({'error': 'Invalid option'}), 400
+
+            was_on_same = user_id in options[option_index].get('voters', [])
+            new_options = [
+                {**opt, 'voters': [v for v in opt.get('voters', []) if v != user_id]}
+                for opt in options
+            ]
+            if not was_on_same:
+                new_options[option_index]['voters'] = new_options[option_index]['voters'] + [user_id]
+
+            result = db.chat_messages.update_one(
+                {'_id': oid, 'poll.is_closed': {'$ne': True}, 'poll.options': options},
+                {'$set': {'poll.options': new_options}}
+            )
+            if result.matched_count > 0:
+                break
+        else:
+            return jsonify({'error': 'Too many concurrent votes — please try again'}), 409
         # Re-fetch to get updated doc and serialize
-        updated = db.chat_messages.find_one({'_id': ObjectId(message_id)})
+        updated = db.chat_messages.find_one({'_id': oid})
         sender_doc = db.users.find_one({'_id': ObjectId(updated['user_id'])}, {'profile_picture': 1})
         pic = (sender_doc.get('profile_picture') or None) if sender_doc else None
         payload = _serialize_message(updated, pic)
@@ -967,13 +978,16 @@ def react_to_message(semester_id, message_id):
         emoji = (data.get('emoji') or '').strip()
         if not emoji:
             return jsonify({'error': 'emoji is required'}), 400
-        msg = db.chat_messages.find_one({'_id': ObjectId(message_id), 'semester_id': semester_id})
+        oid = ObjectId(message_id)
+        try:
+            msg, _reactions = cas_update_reactions(
+                db.chat_messages, {'_id': oid, 'semester_id': semester_id}, emoji, user_id
+            )
+        except ConcurrentUpdateError:
+            return jsonify({'error': 'Too many concurrent reactions — please try again'}), 409
         if not msg:
             return jsonify({'error': 'Message not found'}), 404
-
-        reactions = toggle_reaction(msg.get('reactions', []), emoji, user_id)
-        db.chat_messages.update_one({'_id': ObjectId(message_id)}, {'$set': {'reactions': reactions}})
-        updated = db.chat_messages.find_one({'_id': ObjectId(message_id)})
+        updated = db.chat_messages.find_one({'_id': oid})
         sender_doc = db.users.find_one({'_id': ObjectId(updated['user_id'])}, {'profile_picture': 1})
         pic = (sender_doc.get('profile_picture') or None) if sender_doc else None
         payload = _serialize_message(updated, pic)
@@ -1374,13 +1388,19 @@ def edit_list_entry(semester_id, message_id, entry_idx):
         if entries[entry_idx].get('user_id') != user_id:
             return jsonify({'error': 'Not authorized'}), 403
 
-        db.chat_messages.update_one(
-            {'_id': ObjectId(message_id)},
+        # Guard against a concurrent delete shifting positions between the
+        # bounds/ownership check above and this write: only apply if the entry
+        # at this index still belongs to the same user, otherwise entry_idx may
+        # now point at a different (or no) entry after another request ran first.
+        result = db.chat_messages.update_one(
+            {'_id': ObjectId(message_id), f'list_data.entries.{entry_idx}.user_id': user_id},
             {'$set': {
                 f'list_data.entries.{entry_idx}.content': new_content,
                 f'list_data.entries.{entry_idx}.edited_at': datetime.now(timezone.utc),
             }}
         )
+        if result.matched_count == 0:
+            return jsonify({'error': 'Entry changed — please refresh and try again'}), 409
         payload = _emit_list_updated(db, semester_id, message_id)
         return jsonify({'message': payload}), 200
     except Exception as e:
@@ -1399,22 +1419,35 @@ def delete_list_entry(semester_id, message_id, entry_idx):
         if not _is_semester_member(db, semester_id, user_id):
             return jsonify({'error': 'Not a member'}), 403
 
-        msg = _get_list_msg(db, semester_id, message_id)
-        if not msg:
-            return jsonify({'error': 'List not found'}), 404
+        # Compare-and-swap with retry instead of read-modify-write: the write
+        # only applies if list_data.entries still matches exactly what we read,
+        # so a concurrent add/edit/delete on this same list can't be silently
+        # overwritten by this request's stale in-memory copy.
+        oid = ObjectId(message_id)
+        is_cr = None  # computed lazily, only if needed, and cached across retries
+        for _attempt in range(5):
+            msg = _get_list_msg(db, semester_id, message_id)
+            if not msg:
+                return jsonify({'error': 'List not found'}), 404
 
-        entries = list(msg.get('list_data', {}).get('entries', []))
-        if entry_idx < 0 or entry_idx >= len(entries):
-            return jsonify({'error': 'Entry not found'}), 404
-        if entries[entry_idx].get('user_id') != user_id:
-            if not _is_cr_or_mod(db, semester_id, user_id):
-                return jsonify({'error': 'Not authorized'}), 403
+            entries = list(msg.get('list_data', {}).get('entries', []))
+            if entry_idx < 0 or entry_idx >= len(entries):
+                return jsonify({'error': 'Entry not found'}), 404
+            if entries[entry_idx].get('user_id') != user_id:
+                if is_cr is None:
+                    is_cr = _is_cr_or_mod(db, semester_id, user_id)
+                if not is_cr:
+                    return jsonify({'error': 'Not authorized'}), 403
 
-        entries.pop(entry_idx)
-        db.chat_messages.update_one(
-            {'_id': ObjectId(message_id)},
-            {'$set': {'list_data.entries': entries}}
-        )
+            new_entries = entries[:entry_idx] + entries[entry_idx + 1:]
+            result = db.chat_messages.update_one(
+                {'_id': oid, 'list_data.entries': entries},
+                {'$set': {'list_data.entries': new_entries}}
+            )
+            if result.matched_count > 0:
+                break
+        else:
+            return jsonify({'error': 'Too many concurrent changes — please try again'}), 409
         payload = _emit_list_updated(db, semester_id, message_id)
         return jsonify({'message': payload}), 200
     except Exception as e:
